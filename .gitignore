@@ -1,0 +1,43 @@
+# ── Cache e output generati dallo script ────────────────────────────────────
+cache/
+dataset/
+*.npz
+
+# ── File NetCDF (voluminosi, non versionabili) ───────────────────────────────
+*.nc
+*.nc4
+
+# ── File di dati IZS e GeoJSON di input (dati locali, non condivisi) ─────────
+*.xls
+*.xlsx
+*.csv
+*.geojson
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Ambienti virtuali ────────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env
+
+# ── Editor e sistema operativo ───────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+
+# ── Log ──────────────────────────────────────────────────────────────────────
+*.log
+*.txt

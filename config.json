@@ -1,0 +1,27 @@
+{
+    "_comment": "Configurazione centrale per wacomm-tools. Tutti i parametri modificabili si trovano qui.",
+
+    "paths": {
+        "history_root": "/storage/ccmmma/prometeo/data/opendap/wcm3/d03/history",
+        "cache_dir": "./cache",
+        "metacharts": "./metacharts.json"
+    },
+
+    "model": {
+        "n_hours": 72,
+        "fill_value": 1e37
+    },
+
+    "plot": {
+        "default_max_depth": 50.0,
+        "y_max_concentration": 46000
+    },
+
+    "dataset": {
+        "bacteria": ["Escherichia coli"],
+        "species": ["MYTILUS GALLOPROVINCIALIS MITILO - COZZA"],
+        "target_bins": [78, 230, 4600],
+        "sampling_hour_local": 10,
+        "timezone": "Europe/Rome"
+    }
+}
