@@ -14,7 +14,7 @@
 
     "plot": {
         "default_max_depth": 50.0,
-        "y_max_concentration": 46000
+        "y_max_concentration": null
     },
 
     "dataset": {

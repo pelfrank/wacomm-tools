@@ -41,7 +41,9 @@ FILL_VALUE = float(CFG["model"]["fill_value"])
 
 # Parametri plot
 DEFAULT_MAX_DEPTH = float(CFG["plot"]["default_max_depth"])
-PLOT_Y_MAX        = float(CFG["plot"]["y_max_concentration"])
+# PLOT_Y_MAX può essere null in config.json per disabilitare il limite sull'asse Y
+_y_max = CFG["plot"]["y_max_concentration"]
+PLOT_Y_MAX = float(_y_max) if _y_max is not None else None
 
 # Parametri dataset
 BACTERIA              = CFG["dataset"]["bacteria"]

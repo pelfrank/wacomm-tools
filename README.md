@@ -1,8 +1,8 @@
 # wacomm-tools
 
-A Python toolset for extracting, visualising, and preparing bacterial concentration data from WaComM++ (Water quality Community Model) simulations, aimed at building Machine Learning training datasets for coastal water quality assessment in the Gulf of Naples.
+A Python toolset for extracting, visualising, and preparing bacterial concentration data from WaComM++ (Water quality Community Model) simulations, aimed at building Machine Learning training datasets for coastal water quality assessment.
 
-The project integrates with analytical results from the Istituto Zooprofilattico Sperimentale (IZS) of Portici on *Mytilus galloprovincialis* (mussels), and with NetCDF files produced by the WaComM++ ocean model managed by CCMMMA (Competence Centre for Meteo-Marine Monitoring and Environmental Risk Analysis) — University of Naples Parthenope.
+The project integrates with analytical results on *Mytilus galloprovincialis* (mussels), and with NetCDF files produced by the WaComM++ ocean model managed by CMMMA (Center for Monitoring and Modeling Marine and Atmospheric research and applications) — University of Naples Parthenope.
 
 ---
 
@@ -13,8 +13,8 @@ wacomm-tools/
 ├── config.json            # Central configuration (edit parameters here)
 ├── config.py              # Reads config.json, imported by all scripts
 ├── wacomm_profile.py      # Extract concentration profiles and matrices
-├── wacomm_plot.py         # Visualisation: profiles, matrices, time series
-├── wacomm_dataset.py      # Build ML dataset from IZS results + WaComM
+├── wacomm_plot.py         # Visualisation: profiles, matrices, time series, dataset plots
+├── wacomm_dataset.py      # Build ML dataset CSV files from IZS results + WaComM
 ├── metacharts.json        # Colour scale and concentration levels (app)
 ├── util/                  # Interpolation package (from ccmmma-postpro)
 │   ├── Distributor.py
@@ -36,7 +36,6 @@ wacomm-tools/
 ```
 {history_root}/yyyy/mm/dd/wcm3_d03_yyyymmddZhh00.nc
 ```
-
 ---
 
 ## Installation
@@ -44,7 +43,7 @@ wacomm-tools/
 **1. Clone the repository**
 
 ```bash
-git clone https://github.com/<your-username>/wacomm-tools.git
+git clone https://github.com/pelfrank/wacomm-tools.git
 cd wacomm-tools
 ```
 
@@ -90,7 +89,7 @@ All tuneable parameters are centralised in `config.json`. No Python code needs t
 | `model` | `n_hours` | Number of hours in the timeseries before sampling | `72` |
 | `model` | `fill_value` | Fill value for land/missing cells | `1e37` |
 | `plot` | `default_max_depth` | Maximum depth (m) shown in plots | `50.0` |
-| `plot` | `y_max_concentration` | Y-axis maximum (WaComM concentration) | `46000` |
+| `plot` | `y_max_concentration` | Y-axis maximum for concentration plots. Set to `null` to use automatic scaling | `46000` |
 | `dataset` | `bacteria` | Filter IZS analytes by name | `["Escherichia coli"]` |
 | `dataset` | `species` | Filter IZS matrices by species | `["MYTILUS..."]` |
 | `dataset` | `target_bins` | E. coli classification thresholds (CFU/100g) | `[78, 230, 4600]` |
@@ -122,7 +121,7 @@ Timestamps use the format `yyyymmddZhh00` (e.g. `20230523Z0800`).
 
 ### `wacomm_plot.py` — Visualisation
 
-Generates plots from data extracted by `wacomm_profile.py`.
+Generates plots from data extracted by `wacomm_profile.py`, or from CSV files produced by `wacomm_dataset.py`.
 
 ```bash
 # Vertical concentration profile
@@ -136,6 +135,12 @@ python wacomm_plot.py matrix-lines <lat> <lon> <t0>  [output.png] [--print] [--m
 
 # Total water-column concentration time series
 python wacomm_plot.py totals <lat> <lon> <t0>  [output.png] [--print] [--no-cache]
+
+# Dataset plots — entire folder (all samples at once)
+python wacomm_plot.py dataset <dataset_dir>  [output_dir]  [--max-depth N]
+
+# Dataset plots — single sample
+python wacomm_plot.py dataset <sample_csv> <matrix_csv>  [output_dir]  [--max-depth N]
 ```
 
 **Options:**
@@ -147,19 +152,29 @@ python wacomm_plot.py totals <lat> <lon> <t0>  [output.png] [--print] [--no-cach
 | `--max-depth N` | Limit the depth axis to N metres (default: from `config.json`) |
 | `--no-cache` | Do not read from or write to the on-disk cache |
 
-**Example:**
+**Examples:**
 ```bash
-python wacomm_plot.py totals 40.76558 14.37735 20230523Z0800 output.png --print --max-depth 30
+# Plot all samples produced by wacomm_dataset.py in one command
+python wacomm_plot.py dataset ./dataset_2023/
+
+# Plot a single sample
+python wacomm_plot.py dataset ./dataset_2023/1043A-10060-B_20230125Z0900.csv \
+                               ./dataset_2023/1043A-10060-B_20230125Z0900_matrix.csv
+
+# Plot with automatic Y-axis (no fixed maximum)
+# → set "y_max_concentration": null in config.json, then:
+python wacomm_plot.py totals 40.76558 14.37735 20230523Z0800 output.png
 ```
 
 ---
 
 ### `wacomm_dataset.py` — Build the ML dataset
 
-Creates training samples for an ML dataset by combining IZS results with WaComM simulations. For each valid sampling event, four files are produced.
+Creates training CSV files for an ML dataset by combining analytical results with WaComM simulations.
+**This script produces only CSV files; use `wacomm_plot.py dataset` to generate the plots.**
 
 ```bash
-python wacomm_dataset.py <izs_file> <banchi_geojson> [--output-dir DIR] [--no-cache] [--no-plot]
+python wacomm_dataset.py <analytical_results_file> <farms_geojson_file> [--output-dir DIR] [--max-depth N] [--no-cache]
 ```
 
 **Arguments:**
@@ -169,26 +184,34 @@ python wacomm_dataset.py <izs_file> <banchi_geojson> [--output-dir DIR] [--no-ca
 | `izs_file` | XLS or CSV file with IZS analytical results |
 | `banchi_geojson` | GeoJSON file of the mussel farming zones |
 | `--output-dir` | Output directory (default: `./dataset/`) |
+| `--max-depth N` | Maximum depth (m) for the matrix CSV (default: from `config.json`) |
 | `--no-cache` | Do not use the history-file cache |
-| `--no-plot` | Skip plot generation |
 
 **Example:**
 ```bash
+# Step 1 — generate CSV files
 python wacomm_dataset.py esiti_2023.xls banchi.geojson --output-dir ./dataset_2023/
+
+# Step 2 — generate plots from CSV files
+python wacomm_plot.py dataset ./dataset_2023/
 ```
 
 **Output per sample** (e.g. `scheda=1043A-10060-B`, `t0=20230125Z0900`):
 
 | File | Contents |
 |---|---|
-| `1043A-10060-B_20230125Z0900.csv` | 9 metadata columns + 72 features (hourly column sums) + `target` label |
-| `1043A-10060-B_20230125Z0900_plot.png` | 72-hour WaComM time series + IZS value at t₀ |
-| `1043A-10060-B_20230125Z0900_matrix.csv` | 136-level × 72-hour concentration matrix |
-| `1043A-10060-B_20230125Z0900_matrix_plot.png` | Matrix heatmap |
+| `1043A-10060-B_20230125Z0900.csv` | 9 metadata columns + 72 features (hourly column sums, 72×1) + `target` label |
+| `1043A-10060-B_20230125Z0900_matrix.csv` | d × 72 concentration matrix, where d = Copernicus levels within `max_depth` metres |
+| `1043A-10060-B_20230125Z0900_plot.png` | 72-hour WaComM time series + IZS value at t₀ *(generated by wacomm_plot.py)* |
+| `1043A-10060-B_20230125Z0900_matrix_plot.png` | Matrix heatmap *(generated by wacomm_plot.py)* |
 
-**Sample CSV structure:**
+**Sample CSV structure (72×1):**
 
 The 72 features are named `h_-71`, `h_-70`, ..., `h_+00`, where `h_+00` is the sampling hour (t₀) and `h_-71` is 71 hours before. Each feature is the sum of concentrations across the entire water column at that point and hour.
+
+**Matrix CSV structure (72×d):**
+
+Rows = Copernicus depth levels with depth ≤ `max_depth` (e.g. 14 rows for `max_depth=50`). Columns = 72 hours. Unlike the 72×1 CSV, each row represents a single depth level, allowing the model to distinguish the contribution of each depth.
 
 The `target` label is the bacterial contamination class:
 
@@ -219,22 +242,21 @@ where `p` = profile, `m` = matrix. Use `--no-cache` to force recomputation.
 WaComM history files (.nc)
         │
         ▼
-wacomm_profile.py  ──────────►  wacomm_plot.py
-(data extraction)               (visualisation)
+wacomm_profile.py  ──────────►  wacomm_plot.py  (profile / matrix / totals)
+(data extraction)
         │
         ▼
-wacomm_dataset.py
-        │
-        ├──► {scheda}_{t0}.csv              (features + label)
-        ├──► {scheda}_{t0}_plot.png         (time series + IZS)
-        ├──► {scheda}_{t0}_matrix.csv       (136×72 matrix)
-        └──► {scheda}_{t0}_matrix_plot.png
+wacomm_dataset.py              wacomm_plot.py dataset
+(CSV only)          ─────────► (plots from CSV)
+        │                              │
+        ├──► {scheda}_{t0}.csv         ├──► {scheda}_{t0}_plot.png
+        └──► {scheda}_{t0}_matrix.csv  └──► {scheda}_{t0}_matrix_plot.png
 ```
 
 ---
 
 ## Dependencies and credits
 
-- **WaComM++** — Lagrangian particulate transport model for coastal waters, developed by CCMMMA, University of Naples Parthenope
-- **ccmmma-postpro** — interpolation package (`util/`) provided by CCMMMA; `Distributor.py` and `Interpolator.py` implement the remapping from sigma coordinates to Copernicus depth levels
-- **talco** — CCMMMA web application for ML training data cleaning; `wacomm_dataset.py` replicates the filtering and classification logic from `talco/routes.py`
+- **WaComM++** — Lagrangian particulate transport model for coastal waters, developed by CMMMA, University of Naples Parthenope
+- **ccmmma-postpro** — interpolation package (`util/`) provided by CMMMA; `Distributor.py` and `Interpolator.py` implement the remapping from sigma coordinates to Copernicus depth levels
+- **talco** — CMMMA web application for ML training data cleaning; `wacomm_dataset.py` replicates the filtering and classification logic from `talco/routes.py`

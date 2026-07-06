@@ -1,20 +1,19 @@
 """
 wacomm_plot.py
 --------------
-Visualizzazione dei risultati di wacomm_profile.py.
+Visualizzazione dei risultati di wacomm_profile.py e dei campioni
+prodotti da wacomm_dataset.py.
 
 Utilizzo da riga di comando:
-    python wacomm_plot.py profile      <p> <lambda> <t>   [output.png] [--print] [--max-depth N]
-    python wacomm_plot.py matrix       <p> <lambda> <t0>  [output.png] [--print] [--max-depth N]
-    python wacomm_plot.py matrix-lines <p> <lambda> <t0>  [output.png] [--print] [--max-depth N]
-    python wacomm_plot.py totals       <p> <lambda> <t0>  [output.png] [--print]
+    python wacomm_plot.py profile      <p> <lambda> <t>          [output.png] [--print] [--max-depth N] [--no-cache]
+    python wacomm_plot.py matrix       <p> <lambda> <t0>         [output.png] [--print] [--max-depth N] [--no-cache]
+    python wacomm_plot.py matrix-lines <p> <lambda> <t0>         [output.png] [--print] [--max-depth N] [--no-cache]
+    python wacomm_plot.py totals       <p> <lambda> <t0>         [output.png] [--print] [--no-cache]
+    python wacomm_plot.py dataset      <sample_csv> <matrix_csv> [output_dir] [--max-depth N]
 
-Stessi argomenti di wacomm_profile.py.
---print          : stampa anche i dati numerici a schermo (come fa wacomm_profile.py),
-                    oltre a generare il grafico.
---max-depth N    : profondità massima (in metri) mostrata sull'asse Y, default 50.
-                    L'asse Y è lineare (non logaritmico).
---no-cache       : ignora ed esclude la cache su disco (./cache/)
+--print          : stampa anche i dati numerici a schermo.
+--max-depth N    : profondità massima (m) mostrata sull'asse Y (default da config.json).
+--no-cache       : ignora ed esclude la cache su disco (./cache/).
 
 La scala colori della concentrazione usa gli stessi livelli/colori dell'app
 (file metacharts.json, campi 'clevels' e 'ccolors').
@@ -37,7 +36,7 @@ from wacomm_profile import (
     _print_matrix_summary,
 )
 
-from config import METACHARTS_PATH, DEFAULT_MAX_DEPTH
+from config import METACHARTS_PATH, DEFAULT_MAX_DEPTH, PLOT_Y_MAX
 
 
 # ── Scala colori della concentrazione (condivisa con l'app) ────────────────
@@ -319,7 +318,8 @@ def plot_matrix_lines(result: dict, p: float, lam: float, t0: str,
     # scuro; normalizziamo sull'intervallo dei livelli mostrati (non su tutta
     # la scala 0-136) così la differenza tra le linee è ben visibile anche
     # con poche righe selezionate.
-    cmap = plt.get_cmap("Blues")
+    #cmap = plt.get_cmap("Blues")
+    cmap = plt.get_cmap("turbo")
     if n_levels_r > 1:
         depth_norm = mcolors.Normalize(vmin=depths_r.min(), vmax=depths_r.max())
     else:
@@ -328,7 +328,8 @@ def plot_matrix_lines(result: dict, p: float, lam: float, t0: str,
     # chiaro/invisibile su sfondo bianco, quindi mappiamo su [0.25, 0.95]
     def color_for_depth(d):
         t = depth_norm(d)
-        return cmap(0.25 + 0.70 * t)
+        #return cmap(0.25 + 0.70 * t)
+        return cmap(0.0 + 1.0 * t)
 
     fig, ax = plt.subplots(figsize=(14, 7))
 
@@ -492,6 +493,134 @@ def plot_column_sums(result: dict, p: float, lam: float, t0: str,
     _save_or_show(fig, save_path)
 
 
+# ── Plot dei campioni dataset (da wacomm_dataset.py) ─────────────────────────
+
+def plot_sample(sample: dict, save_path: str = None) -> str | None:
+    """
+    Serie temporale 72h della concentrazione WaComM + valore IZS a t₀.
+
+    Asse X : ore relative a t0, da -71 (sinistra) a 0 (destra = t0)
+    Asse Y sinistro : concentrazione WaComM totale [#], scala 0–PLOT_Y_MAX
+    Asse Y destro   : E. coli [MPN/100g], stessa scala
+    Ultima barra (t₀): valore IZS reale in rosso
+
+    Parametri
+    ----------
+    sample    : dict restituito da wacomm_dataset.build_sample()
+    save_path : percorso del file PNG; se None non salva (mostra a schermo)
+
+    Restituisce il percorso del file salvato, oppure None.
+    """
+    timestamps  = sample["_timestamps"]
+    sums        = np.array(sample["_column_sums"], dtype=float)
+    outcome     = sample["outcome"]
+    n_hours     = len(sums)
+    x           = np.arange(-(n_hours - 1), 1)
+
+    fig, ax = plt.subplots(figsize=(15, 5))
+
+    # Area verde per le ore da -71 a -1 (features WaComM)
+    x_feat, y_feat = x[:-1], sums[:-1]
+    ax.fill_between(x_feat, 0, y_feat,
+                    where=~np.isnan(y_feat),
+                    color="#3a9b3a", alpha=0.85, linewidth=0, zorder=1)
+    ax.plot(x_feat, y_feat, color="#2e7d32", linewidth=1.3, zorder=2)
+
+    # Segmento rosso finale: dall'ultima ora WaComM al valore IZS a t₀
+    y_prev = y_feat[-1] if not np.isnan(y_feat[-1]) else 0.0
+    ax.fill_between([x_feat[-1], 0], 0, [y_prev, outcome],
+                    color="#e53935", alpha=0.95, linewidth=0, zorder=3)
+    ax.plot([x_feat[-1], 0], [y_prev, outcome],
+            color="#c62828", linewidth=1.5, zorder=4)
+
+    target_colors = {0: "#4caf50", 1: "#ff9800", 2: "#f44336", 3: "#7b1fa2"}
+    ax.scatter([0], [outcome],
+               color=target_colors.get(sample["target"], "#c62828"),
+               s=80, zorder=6, edgecolors="black", linewidths=0.7,
+               label=f"IZS outcome={outcome} UFC/100g (classe {sample['target']})")
+
+    # Asse X con ore relative
+    step = 6
+    tick_positions = list(x[::step])
+    if 0 not in tick_positions:
+        tick_positions.append(0)
+    tick_labels = []
+    for rel_h in tick_positions:
+        col   = int(rel_h + (n_hours - 1))
+        stamp = timestamps[col]
+        hh    = stamp[9:11]
+        prev  = col - step
+        if col == 0 or (prev >= 0 and timestamps[col][:8] != timestamps[prev][:8]):
+            tick_labels.append(f"{stamp[6:8]}/{stamp[4:6]}\n{hh}:00 ({int(rel_h):+d}h)")
+        else:
+            tick_labels.append(f"{hh}:00\n({int(rel_h):+d}h)")
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, fontsize=7)
+    ax.set_xlim(x[0], 0)
+    ax.set_xlabel("Ore rispetto al campionamento t₀ (UTC)", fontsize=11)
+
+    ax.set_ylim(bottom=0, top=PLOT_Y_MAX if PLOT_Y_MAX is not None else None)
+    ax.set_ylabel("Concentrazione totale [#]", fontsize=10)
+
+    ax_r = ax.twinx()
+    if PLOT_Y_MAX is not None:
+        ax_r.set_ylim(0, PLOT_Y_MAX)
+    else:
+        ax_r.set_ylim(ax.get_ylim())
+    ax_r.set_ylabel("E. coli [MPN/100g]", fontsize=10)
+
+    ax.set_title(
+        f"Campione dataset ML  —  {sample['sito']}\n"
+        f"lat={sample['lat']:.4f}°N   lon={sample['lon']:.4f}°E   "
+        f"t₀={sample['t0']}   scheda={sample['scheda']}",
+        fontsize=11
+    )
+    ax.grid(True, axis="y", linestyle="-", alpha=0.3, color="gray")
+    ax.spines["top"].set_visible(False)
+    ax_r.spines["top"].set_visible(False)
+    ax.legend(loc="upper left", fontsize=9)
+
+    if sample["_missing"]:
+        ax.text(0.01, 0.95,
+                f"Ore mancanti: {len(sample['_missing'])} (buchi nella serie)",
+                transform=ax.transAxes, fontsize=8, color="red", va="top")
+
+    fig.tight_layout()
+    _save_or_show(fig, save_path)
+    return save_path
+
+
+def plot_sample_matrix(sample: dict, save_path: str = None,
+                       max_depth: float = DEFAULT_MAX_DEPTH) -> str | None:
+    """
+    Heatmap della matrice di concentrazione del campione dataset,
+    limitata ai livelli entro max_depth metri.
+
+    Riusa plot_matrix() passando un dict compatibile costruito dal sample.
+
+    Parametri
+    ----------
+    sample    : dict restituito da wacomm_dataset.build_sample()
+    save_path : percorso del file PNG; se None non salva (mostra a schermo)
+    max_depth : profondità massima asse Y in metri
+
+    Restituisce il percorso del file salvato, oppure None.
+    """
+    result = {
+        "matrix"             : sample["_matrix"],
+        "depths"             : sample["_depths"],
+        "timestamps"         : sample["_timestamps"],
+        "lat_found"          : sample["lat"],
+        "lon_found"          : sample["lon"],
+        "lat_idx"            : 0,
+        "lon_idx"            : 0,
+        "missing_timestamps" : sample["_missing"],
+    }
+    plot_matrix(result, sample["lat"], sample["lon"], sample["t0"],
+                save_path=save_path, max_depth=max_depth)
+    return save_path
+
+
 # ── Utilità ──────────────────────────────────────────────────────────────────
 
 def _save_or_show(fig: plt.Figure, save_path: str = None) -> None:
@@ -506,35 +635,43 @@ def _save_or_show(fig: plt.Figure, save_path: str = None) -> None:
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import pandas as pd
+
     USAGE = (
         "Utilizzo:\n"
-        "  python wacomm_plot.py profile      <p> <lambda> <t>   [output.png] [--print] [--max-depth N] [--no-cache]\n"
-        "  python wacomm_plot.py matrix       <p> <lambda> <t0>  [output.png] [--print] [--max-depth N] [--no-cache]\n"
-        "  python wacomm_plot.py matrix-lines <p> <lambda> <t0>  [output.png] [--print] [--max-depth N] [--no-cache]\n"
-        "  python wacomm_plot.py totals       <p> <lambda> <t0>  [output.png] [--print] [--no-cache]\n"
+        "  python wacomm_plot.py profile      <p> <lambda> <t>          [output.png] [--print] [--max-depth N] [--no-cache]\n"
+        "  python wacomm_plot.py matrix       <p> <lambda> <t0>         [output.png] [--print] [--max-depth N] [--no-cache]\n"
+        "  python wacomm_plot.py matrix-lines <p> <lambda> <t0>         [output.png] [--print] [--max-depth N] [--no-cache]\n"
+        "  python wacomm_plot.py totals       <p> <lambda> <t0>         [output.png] [--print] [--no-cache]\n"
+        "  python wacomm_plot.py dataset      <sample_csv> <matrix_csv> [output_dir] [--max-depth N]\n"
         "\n"
-        "  p / lambda    : latitudine e longitudine (es. 40.85  14.27)\n"
-        "  t / t0        : timestamp yyyymmddZhh00  (es. 20230523Z0800)\n"
-        "  output.png    : opzionale — se assente mostra il grafico a schermo\n"
-        "  --print       : opzionale — stampa anche i dati numerici a schermo\n"
-        "  --max-depth N : opzionale — profondità massima asse Y (matrix) o dei livelli\n"
-        "                  mostrati come linee (matrix-lines), in metri (default 50)\n"
-        "  --no-cache    : opzionale — ignora ed esclude la cache su disco (./cache/)\n"
+        "  Per profile/matrix/matrix-lines/totals:\n"
+        "    p / lambda    : latitudine e longitudine (es. 40.85  14.27)\n"
+        "    t / t0        : timestamp yyyymmddZhh00  (es. 20230523Z0800)\n"
+        "    output.png    : opzionale — se assente mostra il grafico a schermo\n"
+        "    --print       : stampa anche i dati numerici a schermo\n"
+        "    --max-depth N : profondità massima asse Y in metri (default da config.json)\n"
+        "    --no-cache    : ignora la cache su disco\n"
+        "\n"
+        "  Per dataset:\n"
+        "    dataset_dir   : cartella prodotta da wacomm_dataset.py (elabora tutti i campioni)\n"
+        "    oppure:\n"
+        "    sample_csv    : CSV campione singolo prodotto da wacomm_dataset.py\n"
+        "    matrix_csv    : CSV matrice singolo prodotto da wacomm_dataset.py\n"
+        "    output_dir    : cartella di output (default: stessa cartella dei CSV)\n"
+        "    --max-depth N : profondità massima per la heatmap\n"
     )
 
     raw_args = sys.argv[1:]
 
-    # Estrae --print
     do_print = "--print" in raw_args
     if do_print:
         raw_args = [a for a in raw_args if a != "--print"]
 
-    # Estrae --no-cache
     use_cache = "--no-cache" not in raw_args
     if not use_cache:
         raw_args = [a for a in raw_args if a != "--no-cache"]
 
-    # Estrae --max-depth N (consuma due token consecutivi)
     max_depth = DEFAULT_MAX_DEPTH
     if "--max-depth" in raw_args:
         idx = raw_args.index("--max-depth")
@@ -548,13 +685,122 @@ if __name__ == "__main__":
 
     args = raw_args
 
-    if len(args) not in (4, 5):
+    if len(args) < 1:
         print(USAGE)
         sys.exit(1)
 
     subcommand = args[0]
-    if subcommand not in ("profile", "matrix", "matrix-lines", "totals"):
+    if subcommand not in ("profile", "matrix", "matrix-lines", "totals", "dataset"):
         print(f"Sottocomando non riconosciuto: '{subcommand}'\n")
+        print(USAGE)
+        sys.exit(1)
+
+    # ── Sottocomando dataset ─────────────────────────────────────────────────
+    if subcommand == "dataset":
+        if len(args) < 2:
+            print(
+                "Utilizzo:\n"
+                "  python wacomm_plot.py dataset <dataset_dir>           [output_dir]\n"
+                "  python wacomm_plot.py dataset <sample_csv> <matrix_csv> [output_dir]\n"
+            )
+            sys.exit(1)
+
+        def _build_sample_from_csvs(s_path: str, m_path: str) -> dict:
+            """Ricostruisce il sample dict dai due CSV prodotti da wacomm_dataset."""
+            df_s = pd.read_csv(s_path)
+            df_m = pd.read_csv(m_path, index_col=0)
+            row   = df_s.iloc[0]
+            n_hrs = len([c for c in df_s.columns if c.startswith("h_")])
+            sums  = np.array([row.get(f"h_{i-(n_hrs-1):+03d}", np.nan)
+                              for i in range(n_hrs)], dtype=float)
+            timestamps = [c.split("_", 2)[2] for c in df_m.columns]
+            depths_r   = np.array([float(d.replace("m", "")) for d in df_m.index])
+            all_depths = np.array(list(COPERNICUS_DEPTHS))
+            full_mat   = np.full((len(all_depths), len(timestamps)), np.nan)
+            for ki, d in enumerate(depths_r):
+                idx2 = np.where(np.abs(all_depths - d) < 0.01)[0]
+                if len(idx2):
+                    full_mat[idx2[0], :] = df_m.values[ki, :]
+            return {
+                "scheda"       : str(row.get("scheda", "unknown")),
+                "year"         : int(row.get("year", 0)),
+                "date_utc"     : str(row.get("date_utc", "")),
+                "t0"           : str(row.get("t0", "")),
+                "sito"         : str(row.get("sito", "")),
+                "lat"          : float(row.get("lat", 0)),
+                "lon"          : float(row.get("lon", 0)),
+                "outcome"      : int(row.get("outcome", 0)),
+                "target"       : int(row.get("target", 0)),
+                "_timestamps"  : timestamps,
+                "_column_sums" : sums,
+                "_matrix"      : full_mat,
+                "_depths"      : list(COPERNICUS_DEPTHS),
+                "_missing"     : [],
+            }
+
+        def _plot_sample_pair(sample: dict, out_dir: str) -> None:
+            """Genera i due plot per un singolo campione."""
+            os.makedirs(out_dir, exist_ok=True)
+            safe = sample["scheda"].replace("/", "_")
+            t0   = sample["t0"]
+            p1   = os.path.join(out_dir, f"{safe}_{t0}_plot.png")
+            p2   = os.path.join(out_dir, f"{safe}_{t0}_matrix_plot.png")
+            plot_sample(sample, save_path=p1)
+            plot_sample_matrix(sample, save_path=p2, max_depth=max_depth)
+            print(f"  Plot campione → {p1}")
+            print(f"  Plot matrice  → {p2}")
+
+        # Caso A: primo argomento è una cartella → elabora tutti i campioni dentro
+        if os.path.isdir(args[1]):
+            dataset_dir = args[1]
+            output_dir  = args[2] if len(args) >= 3 else dataset_dir
+
+            # Trova tutte le coppie ({stem}.csv, {stem}_matrix.csv)
+            csvs = sorted(f for f in os.listdir(dataset_dir)
+                          if f.endswith(".csv") and "_matrix" not in f
+                          and not f.endswith("_matrix.csv"))
+            if not csvs:
+                print(f"Nessun CSV campione trovato in: {dataset_dir}")
+                sys.exit(1)
+
+            print(f"Trovati {len(csvs)} campioni in: {dataset_dir}")
+            n_ok = n_err = 0
+            for csv_name in csvs:
+                stem       = csv_name[:-4]           # rimuove .csv
+                s_path     = os.path.join(dataset_dir, csv_name)
+                m_path     = os.path.join(dataset_dir, f"{stem}_matrix.csv")
+                if not os.path.exists(m_path):
+                    print(f"  [SKIP] {csv_name}: CSV matrice non trovato")
+                    n_err += 1
+                    continue
+                print(f"\n{csv_name}")
+                try:
+                    sample = _build_sample_from_csvs(s_path, m_path)
+                    _plot_sample_pair(sample, output_dir)
+                    n_ok += 1
+                except Exception as e:
+                    print(f"  [WARN] {e}", file=sys.stderr)
+                    n_err += 1
+
+            print(f"\n{'='*50}")
+            print(f"Plot generati: {n_ok}  |  Errori: {n_err}")
+
+        # Caso B: primo argomento è un file CSV → singolo campione
+        else:
+            if len(args) < 3:
+                print("Utilizzo: python wacomm_plot.py dataset <sample_csv> <matrix_csv> [output_dir]\n")
+                sys.exit(1)
+            s_path     = args[1]
+            m_path     = args[2]
+            output_dir = args[3] if len(args) >= 4 else os.path.dirname(
+                             os.path.abspath(s_path))
+            sample = _build_sample_from_csvs(s_path, m_path)
+            _plot_sample_pair(sample, output_dir)
+
+        sys.exit(0)
+
+    # ── Sottocomandi profile / matrix / matrix-lines / totals ────────────────
+    if len(args) not in (4, 5):
         print(USAGE)
         sys.exit(1)
 
