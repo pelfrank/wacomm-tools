@@ -1,5 +1,3 @@
-git+https://github.com/NCAR/wrf-python.git
-
 # wacomm-tools — dipendenze Python
 # Installare con: pip install -r requirements.txt
 
