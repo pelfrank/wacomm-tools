@@ -1,22 +1,22 @@
 """
 wacomm_plot.py
 --------------
-Visualizzazione dei risultati di wacomm_profile.py e dei campioni
-prodotti da wacomm_dataset.py.
+Visualisation of results from wacomm_profile.py and samples
+produced by wacomm_dataset.py.
 
-Utilizzo da riga di comando:
+Command-line usage:
     python wacomm_plot.py profile      <p> <lambda> <t>          [output.png] [--print] [--max-depth N] [--no-cache]
     python wacomm_plot.py matrix       <p> <lambda> <t0>         [output.png] [--print] [--max-depth N] [--no-cache]
     python wacomm_plot.py matrix-lines <p> <lambda> <t0>         [output.png] [--print] [--max-depth N] [--no-cache]
     python wacomm_plot.py totals       <p> <lambda> <t0>         [output.png] [--print] [--no-cache]
     python wacomm_plot.py dataset      <sample_csv> <matrix_csv> [output_dir] [--max-depth N]
 
---print          : stampa anche i dati numerici a schermo.
---max-depth N    : profondità massima (m) mostrata sull'asse Y (default da config.json).
---no-cache       : ignora ed esclude la cache su disco (./cache/).
+--print          : also print numerical data to the terminal.
+--max-depth N    : maximum depth (m) shown on the Y axis (default from config.json).
+--no-cache       : bypass the on-disk cache (./cache/).
 
-La scala colori della concentrazione usa gli stessi livelli/colori dell'app
-(file metacharts.json, campi 'clevels' e 'ccolors').
+The concentration colour scale uses the same levels and colours as the app
+(metacharts.json, fields 'clevels' and 'ccolors').
 """
 
 import sys
@@ -26,7 +26,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
-# Rende importabile wacomm_profile dallo stesso percorso di questo script
+# Make wacomm_profile importable from the same directory as this script
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wacomm_profile import (
     get_concentration_profile,
@@ -39,33 +39,33 @@ from wacomm_profile import (
 from config import METACHARTS_PATH, DEFAULT_MAX_DEPTH, PLOT_Y_MAX
 
 
-# ── Scala colori della concentrazione (condivisa con l'app) ────────────────
+# ── Concentration colour scale (shared with the app) ─────────────────────────
 
 def load_concentration_colormap(path: str = METACHARTS_PATH):
     """
-    Carica la scala colori discreta della concentrazione da metacharts.json,
-    usando gli stessi 'clevels' (soglie) e 'ccolors' (colori RGBA) dell'app.
+    Loads the discrete concentration colour scale from metacharts.json,
+    using the same 'clevels' (thresholds) and 'ccolors' (RGBA colours) as the app.
 
-    I clevels rappresentano i bordi superiori di ciascun intervallo di colore
-    (36 livelli → 36 colori → 37 bordi, includendo lo 0 come bordo inferiore
-    del primo intervallo).
+    The clevels represent the upper edges of each colour interval
+    (36 levels → 36 colours → 37 boundaries, including 0 as the lower
+    boundary of the first interval).
 
-    Parametri
+    Parameters
     ----------
-    path : str — percorso del file metacharts.json
+    path : str — path to metacharts.json
 
-    Restituisce
-    -----------
+    Returns
+    -------
     (cmap, norm, unit, label) :
-        cmap  : matplotlib.colors.ListedColormap — colori discreti
-        norm  : matplotlib.colors.BoundaryNorm   — bordi degli intervalli
-        unit  : str — unità di misura (es. "#")
-        label : str — etichetta della legenda (es. "Number of Particles")
+        cmap  : matplotlib.colors.ListedColormap — discrete colours
+        norm  : matplotlib.colors.BoundaryNorm   — interval boundaries
+        unit  : str — unit of measure (e.g. "#")
+        label : str — colour bar label (e.g. "Number of Particles")
 
-    Eccezioni
-    ---------
-    FileNotFoundError — se il file non esiste
-    KeyError          — se mancano i campi 'clevels' o 'ccolors'
+    Raises
+    ------
+    FileNotFoundError — if the file does not exist
+    KeyError          — if 'clevels' or 'ccolors' fields are missing
     """
     with open(path, "r") as f:
         meta = json.load(f)["meta-chart"]
@@ -75,68 +75,68 @@ def load_concentration_colormap(path: str = METACHARTS_PATH):
 
     if len(clevels) != len(ccolors):
         raise ValueError(
-            f"clevels ({len(clevels)}) e ccolors ({len(ccolors)}) "
-            "devono avere la stessa lunghezza"
+            f"clevels ({len(clevels)}) and ccolors ({len(ccolors)}) "
+            "must have the same length"
         )
 
-    # Colori normalizzati 0-1 per ListedColormap
+    # Colours normalised to 0-1 for ListedColormap
     colors_norm = [[c / 255.0 for c in rgba] for rgba in ccolors]
     cmap = mcolors.ListedColormap(colors_norm)
 
-    # Bordi degli intervalli: 0 come bordo inferiore, poi i clevels.
-    # N livelli → N+1 bordi (l'ultimo clevel è già il bordo superiore
-    # dell'ultimo colore, quindi i bordi sono [0] + clevels).
+    # Interval boundaries: 0 as lower boundary, then the clevels.
+    # N levels → N+1 boundaries (the last clevel is already the upper
+    # boundary of the last colour, so boundaries = [0] + clevels).
     boundaries = [0] + list(clevels)
     norm = mcolors.BoundaryNorm(boundaries, cmap.N)
 
     unit  = meta.get("unit_bars", "")
-    label = meta.get("title_bars", "Concentrazione")
+    label = meta.get("title_bars", "Concentration")
 
     return cmap, norm, unit, label
 
 
-# ── Punto 1: profilo verticale ───────────────────────────────────────────────
+# ── Step 1: vertical profile ──────────────────────────────────────────────────
 
 def plot_profile(result: dict, p: float, lam: float, t: str,
                  save_path: str = None,
                  max_depth: float = DEFAULT_MAX_DEPTH) -> None:
     """
-    Grafico del profilo verticale di concentrazione sui livelli Copernicus
-    entro max_depth metri.
+    Vertical concentration profile plot over Copernicus levels
+    down to max_depth metres.
 
-    Asse X : concentrazione [#particelle]  (zeri esclusi / trasparenti)
-    Asse Y : profondità in metri, scala LINEARE, crescente verso il basso,
-             limitata a [0, max_depth]
-    Colore dei marker : stessa scala discreta usata dall'app (metacharts.json)
+    X axis : concentration [# particles]  (zeros excluded / transparent)
+    Y axis : depth in metres, LINEAR scale, increasing downward,
+             limited to [0, max_depth]
+    Marker colour : same discrete scale as the app (metacharts.json)
 
-    Parametri
+    Parameters
     ----------
-    result    : dict restituito da get_concentration_profile()
-    p, lam    : coordinate del punto richiesto
+    result    : dict returned by get_concentration_profile()
+    p, lam    : coordinates of the requested point
     t         : timestamp
-    save_path : se fornito, salva su file invece di mostrare a schermo
-    max_depth : profondità massima asse Y, in metri (default 50)
+    save_path : if provided, saves to file instead of displaying on screen
+    max_depth : maximum Y-axis depth in metres (default 50)
     """
-    depths = np.array(result["depths"])            # (136,) in metri
+    depths = np.array(result["depths"])            # (136,) in metres
     conc   = np.array(result["conc"], dtype=float) # (136,)
 
-    # Limita ai livelli entro max_depth
+    # Keep only levels within max_depth
     in_range = depths <= max_depth
     depths_r = depths[in_range]
     conc_r   = conc[in_range]
 
-    # Zeri e NaN → non plottati (trasparenti)
+    # Zeros and NaN → not plotted (transparent)
     valid = (~np.isnan(conc_r)) & (conc_r > 0)
 
     cmap, norm, unit, cbar_label = load_concentration_colormap()
 
     fig, ax = plt.subplots(figsize=(6, 8))
 
-    # Linea di base sottile a collegare i punti (solo dove ci sono dati)
+    # Thin baseline connecting the points (only where data is available)
     ax.plot(conc_r[valid], depths_r[valid],
             color="lightgray", linewidth=1, zorder=1)
 
-    # Marker colorati secondo la stessa scala dell'app
+    # Markers coloured according to the app's scale
     sc = ax.scatter(conc_r[valid], depths_r[valid],
                     c=conc_r[valid], cmap=cmap, norm=norm,
                     s=40, edgecolors="black", linewidths=0.4, zorder=2)
@@ -144,22 +144,22 @@ def plot_profile(result: dict, p: float, lam: float, t: str,
     cbar = fig.colorbar(sc, ax=ax, pad=0.02)
     cbar.set_label(f"{cbar_label} [{unit}]", fontsize=9)
 
-    # Asse Y: LINEARE, crescente verso il basso, limitata a max_depth
+    # Y axis: LINEAR, increasing downward, limited to max_depth
     ax.set_ylim(max_depth, 0)
-    ax.set_ylabel("Profondità [m] ↓", fontsize=11)
-    ax.set_xlabel("Concentrazione [#]", fontsize=11)
+    ax.set_ylabel("Depth [m] ↓", fontsize=11)
+    ax.set_xlabel("Concentration [#]", fontsize=11)
     ax.set_title(
-        f"Profilo verticale di concentrazione (0–{max_depth:.0f} m)\n"
+        f"Vertical concentration profile (0–{max_depth:.0f} m)\n"
         f"lat={result['lat_found']:.4f}°N   lon={result['lon_found']:.4f}°E\n"
         f"t = {t}",
         fontsize=11
     )
     ax.grid(True, linestyle="--", alpha=0.4)
 
-    # Annotazione livelli validi / totali (nel range mostrato)
+    # Annotation: valid levels / total (within the shown range)
     ax.text(0.98, 0.02,
-            f"{valid.sum()}/{in_range.sum()} livelli validi (conc > 0) "
-            f"entro {max_depth:.0f}m",
+            f"{valid.sum()}/{in_range.sum()} valid levels (conc > 0) "
+            f"within {max_depth:.0f}m",
             transform=ax.transAxes, ha="right", va="bottom",
             fontsize=8, color="gray")
 
@@ -167,43 +167,43 @@ def plot_profile(result: dict, p: float, lam: float, t: str,
     _save_or_show(fig, save_path)
 
 
-# ── Punto 2: matrice profondità × tempo ─────────────────────────────────────
+# ── Step 2: depth × time matrix ──────────────────────────────────────────────
 
 def plot_matrix(result: dict, p: float, lam: float, t0: str,
                 save_path: str = None,
                 max_depth: float = DEFAULT_MAX_DEPTH) -> None:
     """
-    Heatmap della matrice concentrazione, limitata ai livelli entro max_depth.
+    Heatmap of the concentration matrix, limited to levels within max_depth.
 
-    Asse X : ore relative a t0, da -71 (sinistra) a 0 (destra = t0)
-    Asse Y : profondità in metri, scala LINEARE, crescente verso il basso,
-             limitata a [0, max_depth]
-    Colore : stessa scala discreta usata dall'app (metacharts.json);
-             0 = trasparente
+    X axis : hours relative to t0, from -71 (left) to 0 (right = t0)
+    Y axis : depth in metres, LINEAR scale, increasing downward,
+             limited to [0, max_depth]
+    Colour : same discrete scale as the app (metacharts.json);
+             0 = transparent
 
-    Parametri
+    Parameters
     ----------
-    result    : dict restituito da get_concentration_matrix()
-    p, lam    : coordinate del punto richiesto
-    t0        : timestamp finale
-    save_path : se fornito, salva su file invece di mostrare a schermo
-    max_depth : profondità massima asse Y, in metri (default 50)
+    result    : dict returned by get_concentration_matrix()
+    p, lam    : coordinates of the requested point
+    t0        : final timestamp
+    save_path : if provided, saves to file instead of displaying on screen
+    max_depth : maximum Y-axis depth in metres (default 50)
     """
     mat_full   = result["matrix"]               # (136, 72)
-    timestamps = result["timestamps"]           # lista 72 stringhe yyyymmddZhh00
-    depths     = np.array(result["depths"])     # (136,) in metri
+    timestamps = result["timestamps"]           # list of 72 yyyymmddZhh00 strings
+    depths     = np.array(result["depths"])     # (136,) in metres
     n_hours    = mat_full.shape[1]               # 72
 
-    # Limita ai livelli entro max_depth
+    # Keep only levels within max_depth
     in_range = depths <= max_depth
     depths_r = depths[in_range]
     mat      = mat_full[in_range, :]
 
-    # ── Asse X: ore relative, da -(n_hours-1) a 0 ───────────────────────────
+    # ── X axis: relative hours, from -(n_hours-1) to 0 ───────────────────────
     x_centers = np.arange(-(n_hours - 1), 1)           # [-71, -70, ..., 0]
-    x_edges   = np.arange(-(n_hours - 1) - 0.5, 0.6)  # 73 bordi
+    x_edges   = np.arange(-(n_hours - 1) - 0.5, 0.6)  # 73 bin edges
 
-    # ── Asse Y: bordi dei bin di profondità (solo livelli entro max_depth) ──
+    # ── Y axis: depth bin edges (only levels within max_depth) ───────────────
     d = depths_r
     if len(d) >= 2:
         d_edges = np.concatenate([
@@ -214,14 +214,14 @@ def plot_matrix(result: dict, p: float, lam: float, t0: str,
     else:
         d_edges = np.array([0.0, max_depth])
 
-    # ── Concentrazione 0 → NaN (trasparente) ────────────────────────────────
+    # ── Concentration 0 → NaN (transparent) ──────────────────────────────────
     mat_plot = mat.copy()
     mat_plot[mat_plot <= 0] = np.nan
 
-    # ── Colormap discreta condivisa con l'app ────────────────────────────────
+    # ── Discrete colour map shared with the app ───────────────────────────────
     cmap, norm, unit, cbar_label = load_concentration_colormap()
 
-    # ── Figura ──────────────────────────────────────────────────────────────
+    # ── Figure ────────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(15, 5))
 
     im = ax.pcolormesh(
@@ -229,27 +229,27 @@ def plot_matrix(result: dict, p: float, lam: float, t0: str,
         cmap=cmap, norm=norm, shading="flat"
     )
 
-    # Colorbar
+    # Colour bar
     cbar = fig.colorbar(im, ax=ax, pad=0.01)
     cbar.set_label(f"{cbar_label} [{unit}]", fontsize=10)
 
-    # ── Asse Y: LINEARE, crescente verso il basso, limitata a max_depth ─────
+    # ── Y axis: LINEAR, increasing downward, limited to max_depth ────────────
     ax.set_ylim(max_depth, 0)
-    ax.set_ylabel("Profondità [m] ↓", fontsize=11)
+    ax.set_ylabel("Depth [m] ↓", fontsize=11)
 
-    # ── Asse X: valori negativi ogni 6 ore + etichetta data al cambio giorno ─
+    # ── X axis: negative values every 6 hours + date label on day change ─────
     step = 6
-    tick_positions = x_centers[::step]          # es. [-71, -65, ..., -5, 0 (se step divide)]
-    # Assicura che 0 sia sempre presente come ultima etichetta
+    tick_positions = x_centers[::step]
+    # Ensure 0 is always present as the last label
     if 0 not in tick_positions:
         tick_positions = np.append(tick_positions, 0)
 
     tick_labels = []
     for rel_h in tick_positions:
-        col = int(rel_h + (n_hours - 1))        # indice nella lista timestamps
+        col = int(rel_h + (n_hours - 1))        # index in the timestamps list
         stamp = timestamps[col]
         hh    = stamp[9:11]
-        # Mostra giorno/mese solo alla prima etichetta o al cambio di giorno
+        # Show day/month only on the first label or when the day changes
         prev_col = col - step
         if col == 0 or (prev_col >= 0 and timestamps[col][:8] != timestamps[prev_col][:8]):
             tick_labels.append(f"{stamp[6:8]}/{stamp[4:6]}\n{hh}:00 ({int(rel_h):+d}h)")
@@ -258,77 +258,73 @@ def plot_matrix(result: dict, p: float, lam: float, t0: str,
 
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, fontsize=7)
-    ax.set_xlabel("Ore rispetto a t₀ (UTC)", fontsize=11)
+    ax.set_xlabel("Hours relative to t₀ (UTC)", fontsize=11)
 
     ax.set_title(
-        f"Concentrazione (0–{max_depth:.0f} m)  —  lat={result['lat_found']:.4f}°N   "
+        f"Concentration (0–{max_depth:.0f} m)  —  lat={result['lat_found']:.4f}°N   "
         f"lon={result['lon_found']:.4f}°E\n"
         f"t₀ = {t0}  |  range: {timestamps[0]}  →  {timestamps[-1]}",
         fontsize=11
     )
     ax.grid(True, which="major", linestyle="--", alpha=0.3, color="gray")
 
-    # Annotazione file mancanti
+    # Missing file annotation
     if result["missing_timestamps"]:
         ax.text(0.01, 0.02,
-                f"File mancanti: {len(result['missing_timestamps'])}",
+                f"Missing files: {len(result['missing_timestamps'])}",
                 transform=ax.transAxes, fontsize=8, color="red")
 
     fig.tight_layout()
     _save_or_show(fig, save_path)
 
 
-# ── Punto 2bis: tutte le profondità come linee sovrapposte ──────────────────
+# ── Step 2b: all depths as overlaid lines ────────────────────────────────────
 
 def plot_matrix_lines(result: dict, p: float, lam: float, t0: str,
                       save_path: str = None,
                       max_depth: float = DEFAULT_MAX_DEPTH) -> None:
     """
-    Grafico a linee della concentrazione nel tempo, una linea per ciascun
-    livello di profondità Copernicus entro max_depth (tutte sullo stesso asse).
+    Line chart of concentration over time, one line per Copernicus depth
+    level within max_depth (all on the same axes).
 
-    Asse X : ore relative a t0, da -71 (sinistra) a 0 (destra = t0)
-    Asse Y : concentrazione [#particelle]
-    Colore delle linee : scala continua in base alla profondità
-                         (chiaro = superficie, scuro = più profondo)
+    X axis : hours relative to t0, from -71 (left) to 0 (right = t0)
+    Y axis : concentration [# particles]
+    Line colour : continuous scale based on depth
+                  (light = surface, dark = deeper)
 
-    Parametri
+    Parameters
     ----------
-    result    : dict restituito da get_concentration_matrix()
-    p, lam    : coordinate del punto richiesto
-    t0        : timestamp finale
-    save_path : se fornito, salva su file invece di mostrare a schermo
-    max_depth : profondità massima dei livelli mostrati, in metri (default 50)
+    result    : dict returned by get_concentration_matrix()
+    p, lam    : coordinates of the requested point
+    t0        : final timestamp
+    save_path : if provided, saves to file instead of displaying on screen
+    max_depth : maximum depth of the levels shown, in metres (default 50)
     """
     mat_full   = result["matrix"]               # (136, n_hours)
     timestamps = result["timestamps"]
-    depths     = np.array(result["depths"])     # (136,) in metri
+    depths     = np.array(result["depths"])     # (136,) in metres
     n_hours    = mat_full.shape[1]
 
-    # Limita ai livelli entro max_depth
+    # Keep only levels within max_depth
     in_range = depths <= max_depth
-    depths_r = depths[in_range]                 # es. (14,) per max_depth=50
-    mat      = mat_full[in_range, :]             # (n_livelli_r, n_hours)
+    depths_r = depths[in_range]                 # e.g. (14,) for max_depth=50
+    mat      = mat_full[in_range, :]             # (n_levels_r, n_hours)
     n_levels_r = mat.shape[0]
 
     x = np.arange(-(n_hours - 1), 1)             # [-71, -70, ..., 0]
 
-    # ── Colormap continua basata sulla profondità ────────────────────────────
-    # Chiaro (superficie) → scuro (profondo). 'Blues' va da quasi bianco a blu
-    # scuro; normalizziamo sull'intervallo dei livelli mostrati (non su tutta
-    # la scala 0-136) così la differenza tra le linee è ben visibile anche
-    # con poche righe selezionate.
-    #cmap = plt.get_cmap("Blues")
+    # ── Continuous colour map based on depth ─────────────────────────────────
+    # Light (surface) → dark (deeper). Normalised over the range of shown
+    # levels (not the full 0-136 scale) so differences are visible even with
+    # few selected levels.
     cmap = plt.get_cmap("turbo")
     if n_levels_r > 1:
         depth_norm = mcolors.Normalize(vmin=depths_r.min(), vmax=depths_r.max())
     else:
         depth_norm = mcolors.Normalize(vmin=0, vmax=max(depths_r[0], 1))
-    # Schiariamo il range inferiore: a vmin pieno il colore sarebbe troppo
-    # chiaro/invisibile su sfondo bianco, quindi mappiamo su [0.25, 0.95]
+
     def color_for_depth(d):
         t = depth_norm(d)
-        #return cmap(0.25 + 0.70 * t)
         return cmap(0.0 + 1.0 * t)
 
     fig, ax = plt.subplots(figsize=(14, 7))
@@ -339,7 +335,7 @@ def plot_matrix_lines(result: dict, p: float, lam: float, t0: str,
         ax.plot(x, y, color=color, linewidth=1.3,
                label=f"{depths_r[k]:.1f} m")
 
-    # ── Asse X: stessa convenzione di plot_matrix / plot_column_sums ────────
+    # ── X axis: same convention as plot_matrix / plot_column_sums ────────────
     step = 6
     tick_positions = list(x[::step])
     if 0 not in tick_positions:
@@ -359,12 +355,12 @@ def plot_matrix_lines(result: dict, p: float, lam: float, t0: str,
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, fontsize=7)
     ax.set_xlim(x[0], x[-1])
-    ax.set_xlabel("Ore rispetto a t₀ (UTC)", fontsize=11)
+    ax.set_xlabel("Hours relative to t₀ (UTC)", fontsize=11)
 
     ax.set_ylim(bottom=0)
-    ax.set_ylabel("Concentrazione [#]", fontsize=11)
+    ax.set_ylabel("Concentration [#]", fontsize=11)
     ax.set_title(
-        f"Concentrazione per livello di profondità (0–{max_depth:.0f} m)\n"
+        f"Concentration by depth level (0–{max_depth:.0f} m)\n"
         f"lat={result['lat_found']:.4f}°N   lon={result['lon_found']:.4f}°E\n"
         f"t₀ = {t0}",
         fontsize=11
@@ -373,45 +369,45 @@ def plot_matrix_lines(result: dict, p: float, lam: float, t0: str,
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    # ── Legenda: una voce per livello, ordinata per profondità crescente ────
-    # Con max_depth=50 sono circa 14 voci: gestibile in una colonna a lato.
-    ax.legend(title="Profondità", loc="center left", bbox_to_anchor=(1.01, 0.5),
+    # ── Legend: one entry per level, ordered by increasing depth ─────────────
+    # With max_depth=50 there are roughly 14 entries: manageable in a side column.
+    ax.legend(title="Depth", loc="center left", bbox_to_anchor=(1.01, 0.5),
               fontsize=8, title_fontsize=9, frameon=False)
 
-    # Annotazione file mancanti
+    # Missing file annotation
     if result["missing_timestamps"]:
         ax.text(0.01, 0.97,
-                f"File mancanti: {len(result['missing_timestamps'])} "
-                "(interruzioni nelle serie)",
+                f"Missing files: {len(result['missing_timestamps'])} "
+                "(gaps in the series)",
                 transform=ax.transAxes, fontsize=8, color="red", va="top")
 
     fig.tight_layout()
     _save_or_show(fig, save_path)
 
 
-# ── Punto 3: serie temporale della concentrazione totale ────────────────────
+# ── Step 3: total water-column concentration time series ─────────────────────
 
 def plot_column_sums(result: dict, p: float, lam: float, t0: str,
                      save_path: str = None) -> None:
     """
-    Area chart della concentrazione totale nella colonna d'acqua, ora per ora.
+    Area chart of the total water-column concentration, hour by hour.
 
-    Usa il vettore 'column_sums' già calcolato da get_concentration_matrix()
-    (somma di tutti i 136 livelli per ciascuna ora).
+    Uses the 'column_sums' vector already computed by get_concentration_matrix()
+    (sum of all 136 levels for each hour).
 
-    Asse X : ore relative a t0, da -71 (sinistra) a 0 (destra = t0)
-    Asse Y : concentrazione totale [#particelle] (somma su tutta la colonna)
-    L'ultimo punto (t0, l'ora di campionamento) è evidenziato in rosso,
-    mentre il resto della serie è disegnato come area verde riempita,
-    in stile simile a un grafico a funzione continua (non un istogramma).
+    X axis : hours relative to t0, from -71 (left) to 0 (right = t0)
+    Y axis : total concentration [# particles] (sum over entire column)
+    The last point (t0, the sampling hour) is highlighted in red,
+    while the rest of the series is drawn as a filled green area,
+    similar to a continuous function plot (not a histogram).
 
-    Parametri
+    Parameters
     ----------
-    result    : dict restituito da get_concentration_matrix()
-                (deve contenere la chiave 'column_sums')
-    p, lam    : coordinate del punto richiesto
-    t0        : timestamp finale (ora di campionamento)
-    save_path : se fornito, salva su file invece di mostrare a schermo
+    result    : dict returned by get_concentration_matrix()
+                (must contain the 'column_sums' key)
+    p, lam    : coordinates of the requested point
+    t0        : final timestamp (sampling hour)
+    save_path : if provided, saves to file instead of displaying on screen
     """
     sums       = np.array(result["column_sums"], dtype=float)  # (72,)
     timestamps = result["timestamps"]                          # (72,)
@@ -419,16 +415,14 @@ def plot_column_sums(result: dict, p: float, lam: float, t0: str,
 
     x = np.arange(-(n_hours - 1), 1)   # [-71, -70, ..., 0]
 
-    # I NaN (ore con file mancante) non vengono disegnati: la linea/area
-    # si interrompe in quei punti. Sostituiamo momentaneamente con 0 solo
-    # per il riempimento, mantenendo NaN nella linea per renderla visibile
-    # come "buco".
+    # NaN values (hours with missing files) are not drawn: the line/area
+    # breaks at those points, creating a visible gap.
     y = sums.copy()
 
     fig, ax = plt.subplots(figsize=(14, 5))
 
-    # ── Area verde riempita per tutti i punti tranne l'ultimo ───────────────
-    # (l'ultimo, t0, viene evidenziato separatamente in rosso)
+    # ── Green filled area for all points except the last ─────────────────────
+    # (the last point, t0, is highlighted separately in red)
     x_main, y_main = x[:-1], y[:-1]
     x_last, y_last = x[-1],  y[-1]
 
@@ -436,9 +430,9 @@ def plot_column_sums(result: dict, p: float, lam: float, t0: str,
                     linewidth=0, zorder=1)
     ax.plot(x_main, y_main, color="#2e7d32", linewidth=1.3, zorder=2)
 
-    # ── Ultimo punto (t0, ora di campionamento) in rosso ────────────────────
-    # Disegnato come piccola area/barra rossa che collega l'ultimo valore
-    # verde al punto finale, per restare fedele al riferimento fornito.
+    # ── Last point (t0, sampling hour) highlighted in red ────────────────────
+    # Drawn as a small red area/bar bridging the last green value to the
+    # final point, to match the reference design.
     if not np.isnan(y_last):
         ax.fill_between([x_main[-1], x_last], 0,
                         [y_main[-1] if not np.isnan(y_main[-1]) else 0, y_last],
@@ -448,7 +442,7 @@ def plot_column_sums(result: dict, p: float, lam: float, t0: str,
                color="#c62828", linewidth=1.3, zorder=4)
         ax.scatter([x_last], [y_last], color="#c62828", s=25, zorder=5)
 
-    # ── Asse X: stessa convenzione di plot_matrix (ore relative a t0) ───────
+    # ── X axis: same convention as plot_matrix (hours relative to t0) ────────
     step = 6
     tick_positions = list(x[::step])
     if 0 not in tick_positions:
@@ -468,48 +462,48 @@ def plot_column_sums(result: dict, p: float, lam: float, t0: str,
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, fontsize=7)
     ax.set_xlim(x[0], x[-1])
-    ax.set_xlabel("Ore rispetto a t₀ (UTC)", fontsize=11)
+    ax.set_xlabel("Hours relative to t₀ (UTC)", fontsize=11)
 
     ax.set_ylim(bottom=0)
-    ax.set_ylabel("Concentrazione totale [#]", fontsize=11)
+    ax.set_ylabel("Total concentration [#]", fontsize=11)
     ax.set_title(
-        f"Concentrazione totale nella colonna d'acqua\n"
+        f"Total water-column concentration\n"
         f"lat={result['lat_found']:.4f}°N   lon={result['lon_found']:.4f}°E\n"
-        f"t₀ = {t0}  (barra rossa)",
+        f"t₀ = {t0}  (red bar)",
         fontsize=11
     )
     ax.grid(True, axis="y", linestyle="-", alpha=0.3, color="gray")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    # Annotazione file mancanti
+    # Missing file annotation
     if result["missing_timestamps"]:
         ax.text(0.01, 0.95,
-                f"File mancanti: {len(result['missing_timestamps'])} "
-                "(interruzioni nella serie)",
+                f"Missing files: {len(result['missing_timestamps'])} "
+                "(gaps in the series)",
                 transform=ax.transAxes, fontsize=8, color="red", va="top")
 
     fig.tight_layout()
     _save_or_show(fig, save_path)
 
 
-# ── Plot dei campioni dataset (da wacomm_dataset.py) ─────────────────────────
+# ── Dataset sample plots (from wacomm_dataset.py) ────────────────────────────
 
 def plot_sample(sample: dict, save_path: str = None) -> str | None:
     """
-    Serie temporale 72h della concentrazione WaComM + valore IZS a t₀.
+    72-hour WaComM concentration time series + IZS value at t₀.
 
-    Asse X : ore relative a t0, da -71 (sinistra) a 0 (destra = t0)
-    Asse Y sinistro : concentrazione WaComM totale [#], scala 0–PLOT_Y_MAX
-    Asse Y destro   : E. coli [MPN/100g], stessa scala
-    Ultima barra (t₀): valore IZS reale in rosso
+    X axis         : hours relative to t0, from -71 (left) to 0 (right = t0)
+    Left Y axis    : total WaComM concentration [#], scale 0–PLOT_Y_MAX
+    Right Y axis   : E. coli [MPN/100g], same scale
+    Last bar (t₀)  : actual IZS value in red
 
-    Parametri
+    Parameters
     ----------
-    sample    : dict restituito da wacomm_dataset.build_sample()
-    save_path : percorso del file PNG; se None non salva (mostra a schermo)
+    sample    : dict returned by wacomm_dataset.build_sample()
+    save_path : path to the PNG file; if None, displays on screen
 
-    Restituisce il percorso del file salvato, oppure None.
+    Returns the path of the saved file, or None.
     """
     timestamps  = sample["_timestamps"]
     sums        = np.array(sample["_column_sums"], dtype=float)
@@ -519,14 +513,14 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
 
     fig, ax = plt.subplots(figsize=(15, 5))
 
-    # Area verde per le ore da -71 a -1 (features WaComM)
+    # Green area for hours from -71 to -1 (WaComM features)
     x_feat, y_feat = x[:-1], sums[:-1]
     ax.fill_between(x_feat, 0, y_feat,
                     where=~np.isnan(y_feat),
                     color="#3a9b3a", alpha=0.85, linewidth=0, zorder=1)
     ax.plot(x_feat, y_feat, color="#2e7d32", linewidth=1.3, zorder=2)
 
-    # Segmento rosso finale: dall'ultima ora WaComM al valore IZS a t₀
+    # Red final segment: from the last WaComM hour to the IZS value at t₀
     y_prev = y_feat[-1] if not np.isnan(y_feat[-1]) else 0.0
     ax.fill_between([x_feat[-1], 0], 0, [y_prev, outcome],
                     color="#e53935", alpha=0.95, linewidth=0, zorder=3)
@@ -537,9 +531,9 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
     ax.scatter([0], [outcome],
                color=target_colors.get(sample["target"], "#c62828"),
                s=80, zorder=6, edgecolors="black", linewidths=0.7,
-               label=f"IZS outcome={outcome} UFC/100g (classe {sample['target']})")
+               label=f"IZS outcome={outcome} CFU/100g (class {sample['target']})")
 
-    # Asse X con ore relative
+    # X axis with relative hours
     step = 6
     tick_positions = list(x[::step])
     if 0 not in tick_positions:
@@ -557,10 +551,10 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, fontsize=7)
     ax.set_xlim(x[0], 0)
-    ax.set_xlabel("Ore rispetto al campionamento t₀ (UTC)", fontsize=11)
+    ax.set_xlabel("Hours relative to sampling t₀ (UTC)", fontsize=11)
 
     ax.set_ylim(bottom=0, top=PLOT_Y_MAX if PLOT_Y_MAX is not None else None)
-    ax.set_ylabel("Concentrazione totale [#]", fontsize=10)
+    ax.set_ylabel("Total concentration [#]", fontsize=10)
 
     ax_r = ax.twinx()
     if PLOT_Y_MAX is not None:
@@ -570,7 +564,7 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
     ax_r.set_ylabel("E. coli [MPN/100g]", fontsize=10)
 
     ax.set_title(
-        f"Campione dataset ML  —  {sample['sito']}\n"
+        f"ML dataset sample  —  {sample['sito']}\n"
         f"lat={sample['lat']:.4f}°N   lon={sample['lon']:.4f}°E   "
         f"t₀={sample['t0']}   scheda={sample['scheda']}",
         fontsize=11
@@ -582,7 +576,7 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
 
     if sample["_missing"]:
         ax.text(0.01, 0.95,
-                f"Ore mancanti: {len(sample['_missing'])} (buchi nella serie)",
+                f"Missing hours: {len(sample['_missing'])} (gaps in the series)",
                 transform=ax.transAxes, fontsize=8, color="red", va="top")
 
     fig.tight_layout()
@@ -593,18 +587,18 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
 def plot_sample_matrix(sample: dict, save_path: str = None,
                        max_depth: float = DEFAULT_MAX_DEPTH) -> str | None:
     """
-    Heatmap della matrice di concentrazione del campione dataset,
-    limitata ai livelli entro max_depth metri.
+    Heatmap of the dataset sample concentration matrix,
+    limited to levels within max_depth metres.
 
-    Riusa plot_matrix() passando un dict compatibile costruito dal sample.
+    Reuses plot_matrix() by building a compatible dict from the sample.
 
-    Parametri
+    Parameters
     ----------
-    sample    : dict restituito da wacomm_dataset.build_sample()
-    save_path : percorso del file PNG; se None non salva (mostra a schermo)
-    max_depth : profondità massima asse Y in metri
+    sample    : dict returned by wacomm_dataset.build_sample()
+    save_path : path to the PNG file; if None, displays on screen
+    max_depth : maximum Y-axis depth in metres
 
-    Restituisce il percorso del file salvato, oppure None.
+    Returns the path of the saved file, or None.
     """
     result = {
         "matrix"             : sample["_matrix"],
@@ -621,45 +615,45 @@ def plot_sample_matrix(sample: dict, save_path: str = None,
     return save_path
 
 
-# ── Utilità ──────────────────────────────────────────────────────────────────
+# ── Utilities ─────────────────────────────────────────────────────────────────
 
 def _save_or_show(fig: plt.Figure, save_path: str = None) -> None:
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Grafico salvato in: {save_path}")
+        print(f"Plot saved to: {save_path}")
     else:
         plt.show()
     plt.close(fig)
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import pandas as pd
 
     USAGE = (
-        "Utilizzo:\n"
+        "Usage:\n"
         "  python wacomm_plot.py profile      <p> <lambda> <t>          [output.png] [--print] [--max-depth N] [--no-cache]\n"
         "  python wacomm_plot.py matrix       <p> <lambda> <t0>         [output.png] [--print] [--max-depth N] [--no-cache]\n"
         "  python wacomm_plot.py matrix-lines <p> <lambda> <t0>         [output.png] [--print] [--max-depth N] [--no-cache]\n"
         "  python wacomm_plot.py totals       <p> <lambda> <t0>         [output.png] [--print] [--no-cache]\n"
         "  python wacomm_plot.py dataset      <sample_csv> <matrix_csv> [output_dir] [--max-depth N]\n"
         "\n"
-        "  Per profile/matrix/matrix-lines/totals:\n"
-        "    p / lambda    : latitudine e longitudine (es. 40.85  14.27)\n"
-        "    t / t0        : timestamp yyyymmddZhh00  (es. 20230523Z0800)\n"
-        "    output.png    : opzionale — se assente mostra il grafico a schermo\n"
-        "    --print       : stampa anche i dati numerici a schermo\n"
-        "    --max-depth N : profondità massima asse Y in metri (default da config.json)\n"
-        "    --no-cache    : ignora la cache su disco\n"
+        "  For profile/matrix/matrix-lines/totals:\n"
+        "    p / lambda    : latitude and longitude (e.g. 40.85  14.27)\n"
+        "    t / t0        : timestamp yyyymmddZhh00  (e.g. 20230523Z0800)\n"
+        "    output.png    : optional — if absent, displays on screen\n"
+        "    --print       : also print numerical data to the terminal\n"
+        "    --max-depth N : maximum Y-axis depth in metres (default from config.json)\n"
+        "    --no-cache    : bypass the on-disk cache\n"
         "\n"
-        "  Per dataset:\n"
-        "    dataset_dir   : cartella prodotta da wacomm_dataset.py (elabora tutti i campioni)\n"
-        "    oppure:\n"
-        "    sample_csv    : CSV campione singolo prodotto da wacomm_dataset.py\n"
-        "    matrix_csv    : CSV matrice singolo prodotto da wacomm_dataset.py\n"
-        "    output_dir    : cartella di output (default: stessa cartella dei CSV)\n"
-        "    --max-depth N : profondità massima per la heatmap\n"
+        "  For dataset:\n"
+        "    dataset_dir   : folder produced by wacomm_dataset.py (processes all samples)\n"
+        "    or:\n"
+        "    sample_csv    : single sample CSV produced by wacomm_dataset.py\n"
+        "    matrix_csv    : single matrix CSV produced by wacomm_dataset.py\n"
+        "    output_dir    : output directory (default: same folder as the CSV files)\n"
+        "    --max-depth N : maximum depth for the heatmap\n"
     )
 
     raw_args = sys.argv[1:]
@@ -678,7 +672,7 @@ if __name__ == "__main__":
         try:
             max_depth = float(raw_args[idx + 1])
         except (IndexError, ValueError):
-            print("Errore: --max-depth richiede un valore numerico dopo di sé.\n")
+            print("Error: --max-depth requires a numeric value.\n")
             print(USAGE)
             sys.exit(1)
         del raw_args[idx:idx + 2]
@@ -691,22 +685,22 @@ if __name__ == "__main__":
 
     subcommand = args[0]
     if subcommand not in ("profile", "matrix", "matrix-lines", "totals", "dataset"):
-        print(f"Sottocomando non riconosciuto: '{subcommand}'\n")
+        print(f"Unknown subcommand: '{subcommand}'\n")
         print(USAGE)
         sys.exit(1)
 
-    # ── Sottocomando dataset ─────────────────────────────────────────────────
+    # ── dataset subcommand ────────────────────────────────────────────────────
     if subcommand == "dataset":
         if len(args) < 2:
             print(
-                "Utilizzo:\n"
-                "  python wacomm_plot.py dataset <dataset_dir>           [output_dir]\n"
+                "Usage:\n"
+                "  python wacomm_plot.py dataset <dataset_dir>             [output_dir]\n"
                 "  python wacomm_plot.py dataset <sample_csv> <matrix_csv> [output_dir]\n"
             )
             sys.exit(1)
 
         def _build_sample_from_csvs(s_path: str, m_path: str) -> dict:
-            """Ricostruisce il sample dict dai due CSV prodotti da wacomm_dataset."""
+            """Reconstructs the sample dict from the two CSVs produced by wacomm_dataset."""
             df_s = pd.read_csv(s_path)
             df_m = pd.read_csv(m_path, index_col=0)
             row   = df_s.iloc[0]
@@ -739,7 +733,7 @@ if __name__ == "__main__":
             }
 
         def _plot_sample_pair(sample: dict, out_dir: str) -> None:
-            """Genera i due plot per un singolo campione."""
+            """Generates the two plots for a single sample."""
             os.makedirs(out_dir, exist_ok=True)
             safe = sample["scheda"].replace("/", "_")
             t0   = sample["t0"]
@@ -747,30 +741,30 @@ if __name__ == "__main__":
             p2   = os.path.join(out_dir, f"{safe}_{t0}_matrix_plot.png")
             plot_sample(sample, save_path=p1)
             plot_sample_matrix(sample, save_path=p2, max_depth=max_depth)
-            print(f"  Plot campione → {p1}")
-            print(f"  Plot matrice  → {p2}")
+            print(f"  Sample plot → {p1}")
+            print(f"  Matrix plot → {p2}")
 
-        # Caso A: primo argomento è una cartella → elabora tutti i campioni dentro
+        # Case A: first argument is a directory → process all samples inside
         if os.path.isdir(args[1]):
             dataset_dir = args[1]
             output_dir  = args[2] if len(args) >= 3 else dataset_dir
 
-            # Trova tutte le coppie ({stem}.csv, {stem}_matrix.csv)
+            # Find all pairs ({stem}.csv, {stem}_matrix.csv)
             csvs = sorted(f for f in os.listdir(dataset_dir)
                           if f.endswith(".csv") and "_matrix" not in f
                           and not f.endswith("_matrix.csv"))
             if not csvs:
-                print(f"Nessun CSV campione trovato in: {dataset_dir}")
+                print(f"No sample CSVs found in: {dataset_dir}")
                 sys.exit(1)
 
-            print(f"Trovati {len(csvs)} campioni in: {dataset_dir}")
+            print(f"Found {len(csvs)} samples in: {dataset_dir}")
             n_ok = n_err = 0
             for csv_name in csvs:
-                stem       = csv_name[:-4]           # rimuove .csv
+                stem       = csv_name[:-4]           # strip .csv
                 s_path     = os.path.join(dataset_dir, csv_name)
                 m_path     = os.path.join(dataset_dir, f"{stem}_matrix.csv")
                 if not os.path.exists(m_path):
-                    print(f"  [SKIP] {csv_name}: CSV matrice non trovato")
+                    print(f"  [SKIP] {csv_name}: matrix CSV not found")
                     n_err += 1
                     continue
                 print(f"\n{csv_name}")
@@ -783,12 +777,12 @@ if __name__ == "__main__":
                     n_err += 1
 
             print(f"\n{'='*50}")
-            print(f"Plot generati: {n_ok}  |  Errori: {n_err}")
+            print(f"Plots generated: {n_ok}  |  Errors: {n_err}")
 
-        # Caso B: primo argomento è un file CSV → singolo campione
+        # Case B: first argument is a CSV file → single sample
         else:
             if len(args) < 3:
-                print("Utilizzo: python wacomm_plot.py dataset <sample_csv> <matrix_csv> [output_dir]\n")
+                print("Usage: python wacomm_plot.py dataset <sample_csv> <matrix_csv> [output_dir]\n")
                 sys.exit(1)
             s_path     = args[1]
             m_path     = args[2]
@@ -799,7 +793,7 @@ if __name__ == "__main__":
 
         sys.exit(0)
 
-    # ── Sottocomandi profile / matrix / matrix-lines / totals ────────────────
+    # ── profile / matrix / matrix-lines / totals subcommands ─────────────────
     if len(args) not in (4, 5):
         print(USAGE)
         sys.exit(1)
@@ -839,5 +833,5 @@ if __name__ == "__main__":
             plot_column_sums(result, p_arg, lam_arg, t_arg, save_path=save_arg)
 
     except (ValueError, FileNotFoundError, RuntimeError) as e:
-        print(f"Errore: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

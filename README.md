@@ -30,7 +30,7 @@ wacomm-tools/
 
 ## Prerequisites
 
-- Python **3.10** or higher
+- Python **3.11** or higher
 - WaComM++ history files (NetCDF) already available on the local machine at the path set in `config.json` (`paths.history_root`). The expected naming convention is:
 
 ```
@@ -58,6 +58,7 @@ venv\Scripts\activate           # Windows
 **3. Install dependencies**
 
 ```bash
+pip install --upgrade pip       # Recommended
 pip install -r requirements.txt
 ```
 

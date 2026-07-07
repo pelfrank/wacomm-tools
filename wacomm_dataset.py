@@ -1,29 +1,29 @@
 """
 wacomm_dataset.py
 -----------------
-Crea campioni per il dataset di addestramento ML integrando:
-  - file XLS/CSV dei risultati IZS (E.coli su Mytilus)
-  - file GeoJSON dei banchi molluschi
-  - file history WaComM++ (tramite wacomm_profile.py)
+Builds ML training dataset samples by combining:
+  - XLS/CSV file with IZS analytical results (E. coli on Mytilus)
+  - GeoJSON file of mussel farming zones (banchi)
+  - WaComM++ history NetCDF files (via wacomm_profile.py)
 
-Per ogni campionamento valido produce due file CSV:
-  - {scheda}_{t0}.csv         — 72 feature (column_sums orarie) + label
-  - {scheda}_{t0}_matrix.csv  — matrice (d × 72) dove d = livelli Copernicus
-                                entro max_depth metri
+For each valid sampling event, produces two CSV files:
+  - {scheda}_{t0}.csv         — 72 features (hourly column sums) + label
+  - {scheda}_{t0}_matrix.csv  — matrix (d × 72) where d = Copernicus levels
+                                within max_depth metres
 
-Per la generazione dei grafici usare wacomm_plot.py.
+For plot generation use wacomm_plot.py.
 
-Utilizzo da riga di comando:
+Command-line usage:
     python wacomm_dataset.py <izs_file> <banchi_geojson>
                              [--output-dir DIR] [--max-depth N] [--no-cache]
 
-    izs_file      : file XLS o CSV dei risultati IZS
-    banchi_geojson: file GeoJSON delle zone di allevamento
-    --output-dir  : cartella di output (default: ./dataset/)
-    --max-depth N : profondità massima per la matrice (default: da config.json)
-    --no-cache    : disabilita la cache dei file history
+    izs_file      : XLS or CSV file with IZS analytical results
+    banchi_geojson: GeoJSON file of mussel farming zones
+    --output-dir  : output directory (default: ./dataset/)
+    --max-depth N : maximum depth for the matrix (default: from config.json)
+    --no-cache    : disable the history file cache
 
-Esempio:
+Example:
     python wacomm_dataset.py esiti_2023.xls banchi.geojson --output-dir ./out/
 """
 
@@ -37,7 +37,7 @@ import pandas as pd
 import pytz
 from datetime import datetime, time
 
-# Rende importabile wacomm_profile dallo stesso percorso di questo script
+# Make wacomm_profile importable from the same directory as this script
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wacomm_profile import get_concentration_matrix
 
@@ -51,19 +51,19 @@ from config import (
     TIMEZONE,
 )
 
-# ── Costanti derivate dalla configurazione ───────────────────────────────────
+# ── Constants derived from configuration ─────────────────────────────────────
 
 ROME_TZ       = pytz.timezone(TIMEZONE)
 TARGET_LABELS = [0, 1, 2, 3]
 
 
-# ── Parsing del file XLS/CSV dei risultati IZS ──────────────────────────────
+# ── XLS/CSV parsing of IZS results ───────────────────────────────────────────
 
 def _extract_outcome(value) -> int | None:
     """
-    Estrae il valore numerico dall'esito IZS.
-    Es.: '290' -> 290, '830 >' -> 830, 'NEGATIVO' -> None
-    Replica la logica di extract_outcome() in routes.py di talco.
+    Extracts the numeric value from an IZS analytical result.
+    E.g.: '290' -> 290, '830 >' -> 830, 'NEGATIVO' -> None
+    Replicates the logic of extract_outcome() in talco's routes.py.
     """
     if isinstance(value, (int, float)):
         return int(value)
@@ -76,17 +76,17 @@ def _extract_outcome(value) -> int | None:
 
 def load_izs(filepath: str) -> pd.DataFrame:
     """
-    Carica e filtra il file XLS/CSV dei risultati IZS.
+    Loads and filters the IZS XLS/CSV results file.
 
-    Applica i filtri di talco:
-      - solo righe con PARAMETRO/ANALITA in BACTERIA
-      - solo righe con MATRICE in SPECIES
-      - solo esiti numerici
+    Applies talco's filters:
+      - only rows with PARAMETRO/ANALITA in BACTERIA
+      - only rows with MATRICE in SPECIES
+      - only numeric outcomes
 
-    Aggrega per NUMERO SCHEDA prendendo il max dell'esito
-    (stesso comportamento di uploadMeasurements in routes.py di talco).
+    Aggregates by NUMERO SCHEDA taking the max outcome
+    (same behaviour as uploadMeasurements in talco's routes.py).
 
-    Restituisce un DataFrame con colonne:
+    Returns a DataFrame with columns:
         scheda, year, date, sito, lat, lon, outcome, target, t0
     """
     if filepath.endswith(".csv"):
@@ -94,7 +94,7 @@ def load_izs(filepath: str) -> pd.DataFrame:
     elif filepath.endswith((".xls", ".xlsx")):
         df = pd.read_excel(filepath)
     else:
-        raise ValueError(f"Formato file non supportato: {filepath}")
+        raise ValueError(f"Unsupported file format: {filepath}")
 
     df = df[
         df["PARAMETRO/ANALITA"].isin(BACTERIA) &
@@ -106,7 +106,7 @@ def load_izs(filepath: str) -> pd.DataFrame:
 
     if df.empty:
         raise ValueError(
-            "Nessuna riga valida trovata dopo il filtro E.coli / Mytilus."
+            "No valid rows found after E. coli / Mytilus filter."
         )
 
     df_agg = df.groupby("NUMERO SCHEDA").agg(
@@ -143,15 +143,15 @@ def load_izs(filepath: str) -> pd.DataFrame:
     return df_agg
 
 
-# ── Parsing del file GeoJSON dei banchi ─────────────────────────────────────
+# ── GeoJSON banchi parsing ────────────────────────────────────────────────────
 
 def load_banchi(filepath: str) -> dict:
     """
-    Carica il file GeoJSON dei banchi e restituisce un dizionario
-        { nome_banco_upper: feature }
+    Loads the GeoJSON banchi file and returns a dictionary
+        { bank_name_upper: feature }
 
-    Il match con il CSV avviene per nome (campo DENOMINAZI del GeoJSON
-    vs campo SITO del CSV), come fa talco.
+    Matching with the CSV is done by name (DENOMINAZI field in GeoJSON
+    vs SITO field in the CSV), as talco does.
     """
     with open(filepath, "r", encoding="utf-8") as f:
         gj = json.load(f)
@@ -162,20 +162,20 @@ def load_banchi(filepath: str) -> dict:
     }
 
 
-# ── Creazione campioni ───────────────────────────────────────────────────────
+# ── Sample building ───────────────────────────────────────────────────────────
 
 def build_sample(row: pd.Series, use_cache: bool = True) -> dict | None:
     """
-    Per un singolo campionamento IZS, calcola la timeseries di N_HOURS ore
-    chiamando get_concentration_matrix() e restituisce un dizionario con
-    features + label + metadata + dati grezzi per il plotting.
+    For a single IZS sampling event, computes the N_HOURS timeseries
+    by calling get_concentration_matrix() and returns a dictionary with
+    features + label + metadata + raw data for plotting.
 
-    Restituisce None se il calcolo fallisce del tutto.
+    Returns None if the computation fails entirely.
 
-    Il dict contiene:
+    The dict contains:
       - metadata: scheda, year, date_utc, t0, sito, lat, lon, outcome, target
-      - feature 72×1: h_-71 … h_+00  (column_sums, somma intera colonna)
-      - dati grezzi (prefisso '_', usati da wacomm_plot.py):
+      - 72×1 features: h_-71 … h_+00  (column_sums, sum over entire column)
+      - raw data (prefix '_', used by wacomm_plot.py):
           _timestamps, _column_sums, _matrix, _depths, _missing
     """
     try:
@@ -187,7 +187,7 @@ def build_sample(row: pd.Series, use_cache: bool = True) -> dict | None:
             use_cache = use_cache,
         )
     except Exception as e:
-        print(f"  [WARN] Impossibile calcolare timeseries per {row['scheda']}: {e}",
+        print(f"  [WARN] Could not compute timeseries for {row['scheda']}: {e}",
               file=sys.stderr)
         return None
 
@@ -206,13 +206,13 @@ def build_sample(row: pd.Series, use_cache: bool = True) -> dict | None:
         "target"   : int(row["target"]),
     }
 
-    # Feature 72×1: somma intera colonna per ogni ora
+    # 72×1 features: full water-column sum for each hour
     for i, ts in enumerate(timestamps):
         hrel = i - (N_HOURS - 1)
         val  = column_sums[i]
         sample[f"h_{hrel:+03d}"] = float(val) if not np.isnan(val) else None
 
-    # Dati grezzi per il plotting (non finiscono nei CSV)
+    # Raw data for plotting (not included in CSV output)
     sample["_timestamps"]  = timestamps
     sample["_column_sums"] = column_sums
     sample["_matrix"]      = result["matrix"]
@@ -222,19 +222,19 @@ def build_sample(row: pd.Series, use_cache: bool = True) -> dict | None:
     return sample
 
 
-# ── Salvataggio CSV campione (72×1 → MPN) ────────────────────────────────────
+# ── Save sample CSV (72×1 → MPN) ─────────────────────────────────────────────
 
 def save_sample_csv(sample: dict, output_dir: str) -> str:
     """
-    Salva il campione 72×1 come CSV.
+    Saves the 72×1 sample as a CSV file.
 
-    Colonne: 9 metadata + 72 feature (h_-71 … h_+00) + label target
-    Nome file: {scheda}_{t0}.csv
+    Columns: 9 metadata + 72 features (h_-71 … h_+00) + target label
+    Filename: {scheda}_{t0}.csv
 
-    Le feature rappresentano la concentrazione totale nella colonna d'acqua
-    (somma su tutti i livelli Copernicus) per ciascuna delle 72 ore.
+    Features represent the total concentration in the water column
+    (sum over all Copernicus levels) for each of the 72 hours.
 
-    Restituisce il percorso del file salvato.
+    Returns the path of the saved file.
     """
     os.makedirs(output_dir, exist_ok=True)
     safe_scheda = sample["scheda"].replace("/", "_").replace("\\", "_")
@@ -245,23 +245,23 @@ def save_sample_csv(sample: dict, output_dir: str) -> str:
     return filepath
 
 
-# ── Salvataggio CSV matrice (72×d → MPN) ────────────────────────────────────
+# ── Save matrix CSV (72×d → MPN) ─────────────────────────────────────────────
 
 def save_matrix_csv(sample: dict, output_dir: str,
                     max_depth: float = DEFAULT_MAX_DEPTH) -> str:
     """
-    Salva la matrice delle concentrazioni per livello come CSV.
+    Saves the per-level concentration matrix as a CSV file.
 
-    Righe   = livelli Copernicus con profondità ≤ max_depth (d righe)
-    Colonne = 72 ore (h_-71 … h_+00)
+    Rows    = Copernicus levels with depth ≤ max_depth (d rows)
+    Columns = 72 hours (h_-71 … h_+00)
 
-    A differenza del CSV campione (72×1, somma dell'intera colonna),
-    qui ogni riga rappresenta un singolo livello di profondità, permettendo
-    al modello ML di distinguere il contributo di ciascun livello.
+    Unlike the sample CSV (72×1, full column sum), each row here represents
+    a single depth level, allowing the ML model to distinguish the
+    contribution of each level.
 
-    Nome file: {scheda}_{t0}_matrix.csv
+    Filename: {scheda}_{t0}_matrix.csv
 
-    Restituisce il percorso del file salvato.
+    Returns the path of the saved file.
     """
     os.makedirs(output_dir, exist_ok=True)
     safe_scheda = sample["scheda"].replace("/", "_").replace("\\", "_")
@@ -269,10 +269,10 @@ def save_matrix_csv(sample: dict, output_dir: str,
                                f"{safe_scheda}_{sample['t0']}_matrix.csv")
 
     matrix     = np.array(sample["_matrix"])    # (136, 72)
-    depths     = np.array(sample["_depths"])    # (136,) in metri
+    depths     = np.array(sample["_depths"])    # (136,) in metres
     timestamps = sample["_timestamps"]          # (72,)
 
-    # Filtra ai soli livelli entro max_depth
+    # Keep only levels within max_depth
     in_range = depths <= max_depth
     matrix_r = matrix[in_range, :]
     depths_r = depths[in_range]
@@ -295,49 +295,49 @@ def save_matrix_csv(sample: dict, output_dir: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Crea campioni dataset ML (CSV) da risultati IZS + WaComM history"
+        description="Build ML dataset CSV samples from IZS results + WaComM history files"
     )
-    parser.add_argument("izs_file",       help="File XLS/CSV dei risultati IZS")
-    parser.add_argument("banchi_geojson", help="File GeoJSON dei banchi molluschi")
+    parser.add_argument("izs_file",       help="XLS/CSV file with IZS analytical results")
+    parser.add_argument("banchi_geojson", help="GeoJSON file of mussel farming zones")
     parser.add_argument("--output-dir",  default="./dataset",
-                        help="Cartella di output (default: ./dataset/)")
+                        help="Output directory (default: ./dataset/)")
     parser.add_argument("--max-depth",   type=float, default=DEFAULT_MAX_DEPTH,
-                        help=f"Profondità massima per la matrice in metri "
+                        help=f"Maximum depth for the matrix in metres "
                              f"(default: {DEFAULT_MAX_DEPTH})")
     parser.add_argument("--no-cache",    action="store_true",
-                        help="Disabilita la cache dei file history")
+                        help="Disable the history file cache")
     args = parser.parse_args()
 
     use_cache  = not args.no_cache
     output_dir = args.output_dir
     max_depth  = args.max_depth
 
-    # 1. Carica IZS
-    print(f"Carico file IZS: {args.izs_file}")
+    # 1. Load IZS results
+    print(f"Loading IZS file: {args.izs_file}")
     df_izs = load_izs(args.izs_file)
-    print(f"  Campioni validi: {len(df_izs)}")
+    print(f"  Valid samples: {len(df_izs)}")
 
-    # 2. Carica banchi
-    print(f"Carico banchi: {args.banchi_geojson}")
+    # 2. Load banchi
+    print(f"Loading banchi: {args.banchi_geojson}")
     bank_map = load_banchi(args.banchi_geojson)
-    print(f"  Banchi caricati: {len(bank_map)}")
+    print(f"  Banchi loaded: {len(bank_map)}")
 
-    # 3. Filtra per match sito↔banco
+    # 3. Filter samples by site↔banco name match
     df_izs = df_izs[df_izs["sito"].isin(bank_map)].copy()
-    print(f"  Campioni con sito nel GeoJSON: {len(df_izs)}")
+    print(f"  Samples with site in GeoJSON: {len(df_izs)}")
 
     if df_izs.empty:
-        print("Nessun campione da elaborare. Uscita.")
+        print("No samples to process. Exiting.")
         sys.exit(0)
 
-    # 4. Per ogni campione: genera i due CSV
+    # 4. For each sample: generate the two CSV files
     os.makedirs(output_dir, exist_ok=True)
     n_ok = 0
     n_err = 0
 
     for idx, row in df_izs.iterrows():
         print(f"\n[{idx+1}/{len(df_izs)}] {row['scheda']}  "
-              f"sito={row['sito']}  t0={row['t0']}  "
+              f"site={row['sito']}  t0={row['t0']}  "
               f"outcome={int(row['outcome'])}  target={row['target']}")
 
         sample = build_sample(row, use_cache=use_cache)
@@ -354,12 +354,12 @@ def main():
 
         n_ok += 1
 
-    # 5. Riepilogo
+    # 5. Summary
     print(f"\n{'='*60}")
-    print(f"Campioni elaborati con successo : {n_ok}")
-    print(f"Campioni con errori             : {n_err}")
-    print(f"Output nella cartella           : {os.path.abspath(output_dir)}")
-    print(f"Per generare i grafici usare    : wacomm_plot.py dataset ...")
+    print(f"Samples processed successfully : {n_ok}")
+    print(f"Samples with errors            : {n_err}")
+    print(f"Output directory               : {os.path.abspath(output_dir)}")
+    print(f"To generate plots use          : wacomm_plot.py dataset ...")
 
 
 if __name__ == "__main__":
