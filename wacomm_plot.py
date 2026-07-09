@@ -36,7 +36,7 @@ from wacomm_profile import (
     _print_matrix_summary,
 )
 
-from config import METACHARTS_PATH, DEFAULT_MAX_DEPTH, PLOT_Y_MAX
+from config import METACHARTS_PATH, DEFAULT_MAX_DEPTH, PLOT_Y_MAX_CONCENTRATION, PLOT_Y_MAX_MPN
 
 
 # ── Concentration colour scale (shared with the app) ─────────────────────────
@@ -494,8 +494,8 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
     72-hour WaComM concentration time series + IZS value at t₀.
 
     X axis         : hours relative to t0, from -71 (left) to 0 (right = t0)
-    Left Y axis    : total WaComM concentration [#], scale 0–PLOT_Y_MAX
-    Right Y axis   : E. coli [MPN/100g], same scale
+    Left Y axis    : total WaComM concentration [#], scale 0-PLOT_Y_MAX_CONCENTRATION
+    Right Y axis   : E. coli [MPN/100g], scale 0-PLOT_Y_MAX_MPN
     Last bar (t₀)  : actual IZS value in red
 
     Parameters
@@ -553,14 +553,11 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
     ax.set_xlim(x[0], 0)
     ax.set_xlabel("Hours relative to sampling t₀ (UTC)", fontsize=11)
 
-    ax.set_ylim(bottom=0, top=PLOT_Y_MAX if PLOT_Y_MAX is not None else None)
+    ax.set_ylim(bottom=0, top=PLOT_Y_MAX_CONCENTRATION)
     ax.set_ylabel("Total concentration [#]", fontsize=10)
 
     ax_r = ax.twinx()
-    if PLOT_Y_MAX is not None:
-        ax_r.set_ylim(0, PLOT_Y_MAX)
-    else:
-        ax_r.set_ylim(ax.get_ylim())
+    ax_r.set_ylim(0, PLOT_Y_MAX_MPN)
     ax_r.set_ylabel("E. coli [MPN/100g]", fontsize=10)
 
     ax.set_title(
