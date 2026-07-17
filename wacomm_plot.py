@@ -513,25 +513,30 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
 
     fig, ax = plt.subplots(figsize=(15, 5))
 
-    # Green area for hours from -71 to -1 (WaComM features)
-    x_feat, y_feat = x[:-1], sums[:-1]
-    ax.fill_between(x_feat, 0, y_feat,
-                    where=~np.isnan(y_feat),
+    # Green area for all 72 hours including t₀ — drawn on left axis (WaComM scale).
+    # The series is now continuous to the end; the IZS point is overlaid separately.
+    ax.fill_between(x, 0, sums,
+                    where=~np.isnan(sums),
                     color="#3a9b3a", alpha=0.85, linewidth=0, zorder=1)
-    ax.plot(x_feat, y_feat, color="#2e7d32", linewidth=1.3, zorder=2)
+    ax.plot(x, sums, color="#2e7d32", linewidth=1.3, zorder=2)
 
-    # Red final segment: from the last WaComM hour to the IZS value at t₀
-    y_prev = y_feat[-1] if not np.isnan(y_feat[-1]) else 0.0
-    ax.fill_between([x_feat[-1], 0], 0, [y_prev, outcome],
-                    color="#e53935", alpha=0.95, linewidth=0, zorder=3)
-    ax.plot([x_feat[-1], 0], [y_prev, outcome],
-            color="#c62828", linewidth=1.5, zorder=4)
+    # Right axis (MPN scale) — created before drawing the IZS point
+    ax_r = ax.twinx()
+    ax_r.set_ylim(0, PLOT_Y_MAX_MPN)
+    ax_r.set_ylabel("E. coli [MPN/100g]", fontsize=10)
+    ax_r.spines["top"].set_visible(False)
 
+    # IZS point overlaid at x=0 on the right axis (MPN scale).
+    # The green series shows the WaComM value at t₀ on the left scale;
+    # the red marker shows the IZS measurement on the right scale.
     target_colors = {0: "#4caf50", 1: "#ff9800", 2: "#f44336", 3: "#7b1fa2"}
-    ax.scatter([0], [outcome],
-               color=target_colors.get(sample["target"], "#c62828"),
-               s=80, zorder=6, edgecolors="black", linewidths=0.7,
-               label=f"IZS outcome={outcome} CFU/100g (class {sample['target']})")
+    ax_r.scatter([0], [outcome],
+                 color=target_colors.get(sample["target"], "#c62828"),
+                 s=120, zorder=6, edgecolors="black", linewidths=0.9,
+                 label=f"IZS outcome={outcome} CFU/100g (class {sample['target']})")
+    # Vertical dashed red line at t₀ to make the IZS point visually prominent
+    ax_r.axvline(x=0, color="#c62828", linewidth=1.2, linestyle="--",
+                 alpha=0.6, zorder=3)
 
     # X axis with relative hours
     step = 6
@@ -556,10 +561,6 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
     ax.set_ylim(bottom=0, top=PLOT_Y_MAX_CONCENTRATION)
     ax.set_ylabel("Total concentration [#]", fontsize=10)
 
-    ax_r = ax.twinx()
-    ax_r.set_ylim(0, PLOT_Y_MAX_MPN)
-    ax_r.set_ylabel("E. coli [MPN/100g]", fontsize=10)
-
     ax.set_title(
         f"ML dataset sample  —  {sample['sito']}\n"
         f"lat={sample['lat']:.4f}°N   lon={sample['lon']:.4f}°E   "
@@ -568,8 +569,7 @@ def plot_sample(sample: dict, save_path: str = None) -> str | None:
     )
     ax.grid(True, axis="y", linestyle="-", alpha=0.3, color="gray")
     ax.spines["top"].set_visible(False)
-    ax_r.spines["top"].set_visible(False)
-    ax.legend(loc="upper left", fontsize=9)
+    ax_r.legend(loc="upper left", fontsize=9)
 
     if sample["_missing"]:
         ax.text(0.01, 0.95,

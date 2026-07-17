@@ -1,6 +1,8 @@
 # ── Cache e output generati dallo script ────────────────────────────────────
 cache/
+cache.backup/
 dataset/
+dataset.backup/
 *.npz
 
 # ── File NetCDF (voluminosi, non versionabili) ───────────────────────────────
@@ -11,6 +13,7 @@ dataset/
 *.xls
 *.xlsx
 *.csv
+*.zip
 data/
 
 # ── Python ───────────────────────────────────────────────────────────────────

@@ -287,8 +287,8 @@ def get_concentration_profile(p: float, lam: float, t: str,
         "file"      : filepath,
     }
 
-    if use_cache:
-        _save_cache(cache_file, result)
+    #if use_cache:
+    _save_cache(cache_file, result)
 
     return result
 
