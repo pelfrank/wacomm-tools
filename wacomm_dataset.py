@@ -306,6 +306,9 @@ def main():
                              f"(default: {DEFAULT_MAX_DEPTH})")
     parser.add_argument("--no-cache",    action="store_true",
                         help="Disable the history file cache")
+    parser.add_argument("--resume",      action="store_true",
+                        help="Skip samples whose CSV files already exist in "
+                             "the output directory (resume an interrupted run)")
     args = parser.parse_args()
 
     use_cache  = not args.no_cache
@@ -332,13 +335,26 @@ def main():
 
     # 4. For each sample: generate the two CSV files
     os.makedirs(output_dir, exist_ok=True)
-    n_ok = 0
-    n_err = 0
+    n_ok      = 0
+    n_skipped = 0
+    n_err     = 0
 
     for idx, row in df_izs.iterrows():
         print(f"\n[{idx+1}/{len(df_izs)}] {row['scheda']}  "
               f"site={row['sito']}  t0={row['t0']}  "
               f"outcome={int(row['outcome'])}  target={row['target']}")
+
+        # Resume: skip if both output CSVs already exist
+        if args.resume:
+            safe_scheda = row["scheda"].replace("/", "_").replace("\\", "_")
+            csv_exists = os.path.join(
+                output_dir, f"{safe_scheda}_{row['t0']}.csv")
+            mat_exists = os.path.join(
+                output_dir, f"{safe_scheda}_{row['t0']}_matrix.csv")
+            if os.path.exists(csv_exists) and os.path.exists(mat_exists):
+                print(f"  [SKIP] already exists")
+                n_skipped += 1
+                continue
 
         sample = build_sample(row, use_cache=use_cache)
         if sample is None:
@@ -357,6 +373,7 @@ def main():
     # 5. Summary
     print(f"\n{'='*60}")
     print(f"Samples processed successfully : {n_ok}")
+    print(f"Samples skipped (already exist): {n_skipped}")
     print(f"Samples with errors            : {n_err}")
     print(f"Output directory               : {os.path.abspath(output_dir)}")
     print(f"To generate plots use          : wacomm_plot.py dataset ...")
