@@ -60,6 +60,7 @@ import re
 from datetime import datetime, timezone, timedelta
 
 from qgis.core import (
+    Qgis,
     QgsProject,
     QgsRasterLayer,
     QgsVectorLayer,
@@ -77,18 +78,26 @@ def timestamp_to_qdatetime(ts: str) -> QDateTime:
     """
     Converts a WaComM timestamp string (yyyymmddZhh00) to a QDateTime in UTC.
     E.g. '20230523Z0800' → QDateTime(2023, 5, 23, 8, 0, 0, UTC)
+    Compatible with QGIS 4.x (PyQt6): uses Qt.TimeSpec.UTC instead of Qt.UTC.
     """
     m = re.match(r"^(\d{4})(\d{2})(\d{2})Z(\d{2})00$", ts)
     if not m:
         raise ValueError(f"Invalid WaComM timestamp: {ts!r}")
     yyyy, mm, dd, hh = int(m[1]), int(m[2]), int(m[3]), int(m[4])
-    return QDateTime(QDate(yyyy, mm, dd), QTime(hh, 0, 0), Qt.UTC)
+    # PyQt6 (QGIS 4.x) uses Qt.TimeSpec.UTC; PyQt5 (QGIS 3.x) uses Qt.UTC.
+    # Try both for forward/backward compatibility.
+    try:
+        utc_spec = Qt.TimeSpec.UTC      # PyQt6 / QGIS 4.x
+    except AttributeError:
+        utc_spec = Qt.UTC               # PyQt5 / QGIS 3.x
+    return QDateTime(QDate(yyyy, mm, dd), QTime(hh, 0, 0), utc_spec)
 
 
 def make_pseudocolor_renderer(layer, vmin, vmax, ramp_name):
     """
     Creates a single-band pseudocolor renderer with the requested colour ramp,
     applied to the given raster layer between vmin and vmax.
+    Compatible with QGIS 4.x (PyQt6, Qt6).
     """
     # Build the colour ramp from QGIS built-in styles
     style      = QgsStyle.defaultStyle()
@@ -97,9 +106,11 @@ def make_pseudocolor_renderer(layer, vmin, vmax, ramp_name):
         print(f"  [WARN] Colour ramp '{ramp_name}' not found; using Spectral.")
         color_ramp = style.colorRamp("Spectral")
 
+    # QGIS 4.x: color ramp is passed to the constructor via setSourceColorRamp,
+    # interpolation type is now Qgis.ShaderInterpolationMethod
     ramp_shader = QgsColorRampShader(vmin, vmax)
-    ramp_shader.setColorRampType(QgsColorRampShader.Interpolated)
-    ramp_shader.setColorRamp(color_ramp)
+    ramp_shader.setColorRampType(Qgis.ShaderInterpolationMethod.Linear)
+    ramp_shader.setSourceColorRamp(color_ramp)
     ramp_shader.classifyColorRamp()
 
     raster_shader = QgsRasterShader()
@@ -165,7 +176,8 @@ def load_geotiffs(geotiff_dir, group_name, color_ramp, vmin, vmax, step_hours):
         t_end   = t_start.addSecs(step_hours * 3600)
 
         tp = layer.temporalProperties()
-        tp.setMode(QgsRasterLayerTemporalProperties.ModeFixedTemporalRange)
+        # QGIS 4.x: mode enum moved to Qgis.RasterTemporalMode
+        tp.setMode(Qgis.RasterTemporalMode.FixedTemporalRange)
         tp.setFixedTemporalRange(QgsDateTimeRange(t_start, t_end))
         tp.setIsActive(True)
 
