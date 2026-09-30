@@ -2,7 +2,7 @@
     "_comment": "Configurazione centrale per wacomm-tools. Tutti i parametri modificabili si trovano qui.",
 
     "paths": {
-        "history_root": "/storage/ccmmma/prometeo/data/opendap/wcm3/d03/history",
+        "history_root": "/storage/internal_02/fpeluso-data/wacomm_history/",
         "cache_dir": "./cache",
         "metacharts": "./metacharts.json"
     },
@@ -14,7 +14,8 @@
 
     "plot": {
         "default_max_depth": 50.0,
-        "y_max_concentration": 46000
+        "y_max_concentration": 46000,
+	"y_max_mpn": 4600
     },
 
     "dataset": {
