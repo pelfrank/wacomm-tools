@@ -28,24 +28,19 @@ After running:
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Directory containing the GeoTIFF files produced by wacomm_to_geotiff.py
-GEOTIFF_DIR = "/path/to/geotiff/20230523Z0800"
+GEOTIFF_DIR = "/home/francesco/Scrivania/wacomm-tools/data/history_geotiff/2023_single/"
 
 # (Optional) Path to the sampling point GeoJSON produced by wacomm_to_geojson.py.
 # Set to None or "" to skip loading the GeoJSON.
-GEOJSON_PATH = "/path/to/dataset/1043A-50590-B_20230523Z0800.geojson"
+GEOJSON_PATH = "/home/francesco/Scrivania/wacomm-tools/dataset/2023_single/1043A-50590-B_20230523Z0800.geojson"
 
 # Name of the QGIS group that will contain all 72 raster layers
-GROUP_NAME = "WaComM concentration"
+GROUP_NAME = "1043A-50590-B_20230523Z0800"
 
-# Colour ramp for the concentration values.
-# Options: 'YlOrRd', 'Blues', 'Greens', 'RdYlBu', 'viridis', 'plasma', etc.
-# Any name valid in QgsColorRampShader works.
-COLOR_RAMP = "YlOrRd"
-
-# Minimum and maximum values for the colour scale.
-# Set both to None to use automatic scaling per layer (less consistent).
-CONC_MIN = 0.0
-CONC_MAX = 3000.0
+# Path to metacharts.json — same file used by wacomm_plot.py.
+# The colour scale (clevels + ccolors) is read from this file so that
+# QGIS uses the exact same colours as the Python concentration plots.
+METACHARTS_PATH = "/home/francesco/Scrivania/wacomm-tools/metacharts.json"
 
 # Temporal step: duration of each frame in the animation (hours).
 # Keep at 1 to match the hourly resolution of WaComM history files.
@@ -57,6 +52,7 @@ STEP_HOURS = 1
 
 import os
 import re
+import json
 from datetime import datetime, timezone, timedelta
 
 from qgis.core import (
@@ -69,9 +65,9 @@ from qgis.core import (
     QgsColorRampShader,
     QgsRasterShader,
     QgsSingleBandPseudoColorRenderer,
-    QgsStyle,
 )
 from qgis.PyQt.QtCore import QDateTime, QDate, QTime, Qt
+from qgis.PyQt.QtGui import QColor
 
 
 def timestamp_to_qdatetime(ts: str) -> QDateTime:
@@ -93,25 +89,49 @@ def timestamp_to_qdatetime(ts: str) -> QDateTime:
     return QDateTime(QDate(yyyy, mm, dd), QTime(hh, 0, 0), utc_spec)
 
 
-def make_pseudocolor_renderer(layer, vmin, vmax, ramp_name):
+def load_metacharts_colormap(metacharts_path: str):
     """
-    Creates a single-band pseudocolor renderer with the requested colour ramp,
-    applied to the given raster layer between vmin and vmax.
+    Reads clevels and ccolors from metacharts.json and returns a list of
+    QgsColorRampShader.ColorRampItem objects — one per level — that reproduce
+    the exact same discrete colour scale used by wacomm_plot.py.
+
+    clevels: list of 36 threshold values (upper boundary of each colour band)
+    ccolors: list of 36 RGBA colours [R, G, B, A] in 0-255 range
+    """
+    with open(metacharts_path, "r") as f:
+        meta = json.load(f)["meta-chart"]
+
+    clevels = meta["clevels"]   # [1, 3, 6, 8, ..., 46000]
+    ccolors = meta["ccolors"]   # [[R,G,B,A], ...]
+
+    items = []
+    for level, rgba in zip(clevels, ccolors):
+        r, g, b, a = rgba
+        color = QColor(r, g, b, a)
+        items.append(QgsColorRampShader.ColorRampItem(float(level), color,
+                                                       str(level)))
+    return items, float(clevels[0]), float(clevels[-1])
+
+
+def make_pseudocolor_renderer(layer, metacharts_path):
+    """
+    Creates a single-band pseudocolor renderer using the discrete colour scale
+    from metacharts.json — identical to the one used in the Python plots.
+
+    The colour scale is discrete (Exact mode): each clevels value maps to
+    its exact colour, matching the ListedColormap used by wacomm_plot.py.
+    Values below the first clevel are transparent; values above the last
+    clevel use the last colour.
+
     Compatible with QGIS 4.x (PyQt6, Qt6).
     """
-    # Build the colour ramp from QGIS built-in styles
-    style      = QgsStyle.defaultStyle()
-    color_ramp = style.colorRamp(ramp_name)
-    if color_ramp is None:
-        print(f"  [WARN] Colour ramp '{ramp_name}' not found; using Spectral.")
-        color_ramp = style.colorRamp("Spectral")
+    color_items, vmin, vmax = load_metacharts_colormap(metacharts_path)
 
-    # QGIS 4.x: color ramp is passed to the constructor via setSourceColorRamp,
-    # interpolation type is now Qgis.ShaderInterpolationMethod
     ramp_shader = QgsColorRampShader(vmin, vmax)
-    ramp_shader.setColorRampType(Qgis.ShaderInterpolationMethod.Linear)
-    ramp_shader.setSourceColorRamp(color_ramp)
-    ramp_shader.classifyColorRamp()
+    # Discrete mode: each interval has a fixed colour, no interpolation.
+    # This mirrors the ListedColormap / BoundaryNorm used in wacomm_plot.py.
+    ramp_shader.setColorRampType(Qgis.ShaderInterpolationMethod.Discrete)
+    ramp_shader.setColorRampItemList(color_items)
 
     raster_shader = QgsRasterShader()
     raster_shader.setRasterShaderFunction(ramp_shader)
@@ -122,7 +142,7 @@ def make_pseudocolor_renderer(layer, vmin, vmax, ramp_name):
     return renderer
 
 
-def load_geotiffs(geotiff_dir, group_name, color_ramp, vmin, vmax, step_hours):
+def load_geotiffs(geotiff_dir, group_name, metacharts_path, step_hours):
     """
     Loads all wcm3_*.tif files from geotiff_dir into a QGIS layer group,
     sets temporal properties and colour renderer on each layer.
@@ -145,9 +165,6 @@ def load_geotiffs(geotiff_dir, group_name, color_ramp, vmin, vmax, step_hours):
     if group is None:
         group = root.insertGroup(0, group_name)
 
-    # Determine colour scale (auto if vmin/vmax not set)
-    use_auto_scale = (vmin is None or vmax is None)
-
     n_ok = 0
     for tif_name in tif_files:
         # Extract timestamp from filename: wcm3_20230523Z0800.tif
@@ -160,15 +177,8 @@ def load_geotiffs(geotiff_dir, group_name, color_ramp, vmin, vmax, step_hours):
             print(f"  [WARN] Could not load: {tif_path}")
             continue
 
-        # ── Colour renderer ───────────────────────────────────────────────
-        if use_auto_scale:
-            stats = layer.dataProvider().bandStatistics(1)
-            cur_min = stats.minimumValue
-            cur_max = stats.maximumValue
-        else:
-            cur_min, cur_max = vmin, vmax
-
-        renderer = make_pseudocolor_renderer(layer, cur_min, cur_max, color_ramp)
+        # ── Colour renderer (metacharts.json discrete scale) ──────────────
+        renderer = make_pseudocolor_renderer(layer, metacharts_path)
         layer.setRenderer(renderer)
 
         # ── Temporal properties ───────────────────────────────────────────
@@ -185,7 +195,7 @@ def load_geotiffs(geotiff_dir, group_name, color_ramp, vmin, vmax, step_hours):
         QgsProject.instance().addMapLayer(layer, addToLegend=False)
         group.addLayer(layer)
 
-        print(f"  ✓  {ts}  [{cur_min:.0f} – {cur_max:.0f}]")
+        print(f"  ✓  {ts}")
         n_ok += 1
 
     return n_ok
@@ -212,12 +222,10 @@ print("WaComM QGIS Loader")
 print("=" * 60)
 
 n = load_geotiffs(
-    geotiff_dir = GEOTIFF_DIR,
-    group_name  = GROUP_NAME,
-    color_ramp  = COLOR_RAMP,
-    vmin        = CONC_MIN,
-    vmax        = CONC_MAX,
-    step_hours  = STEP_HOURS,
+    geotiff_dir    = GEOTIFF_DIR,
+    group_name     = GROUP_NAME,
+    metacharts_path= METACHARTS_PATH,
+    step_hours     = STEP_HOURS,
 )
 
 if GEOJSON_PATH:

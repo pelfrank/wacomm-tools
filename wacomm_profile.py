@@ -192,6 +192,70 @@ def _load_cache(path: str) -> dict:
     return result
 
 
+def snap_to_nearest_sea(j0: int, i0: int,
+                        mask_rho: np.ndarray,
+                        h: np.ndarray,
+                        min_depth: float = 5.0,
+                        rmax: int = 50) -> tuple[int, int]:
+    """
+    Given a starting cell (j0, i0) on the curvilinear grid, returns the
+    nearest wet cell (mask_rho >= 0.5 and h >= min_depth).
+
+    If (j0, i0) is already a valid sea cell, it is returned unchanged.
+    Otherwise the search expands outward ring by ring (Manhattan distance)
+    up to rmax cells, and among all sea cells found in the first ring that
+    contains at least one, returns the one with the smallest Euclidean
+    distance from the original point.
+
+    This replicates the snap_to_nearest_sea() logic from the
+    sources-processor repository provided by Prof. Montella.
+
+    Parameters
+    ----------
+    j0, i0    : int — starting row / column indices on the curvilinear grid
+    mask_rho  : np.ndarray (eta_rho, eta_xi) — land/sea mask (1=sea, 0=land)
+    h         : np.ndarray (eta_rho, eta_xi) — bathymetry in metres
+    min_depth : float — minimum sea depth to consider a cell valid (default 5 m)
+    rmax      : int   — maximum search radius in grid cells (default 50)
+
+    Returns
+    -------
+    (j, i) : tuple[int, int] — indices of the nearest valid sea cell
+    """
+    ny, nx = mask_rho.shape
+    j0 = int(np.clip(j0, 0, ny - 1))
+    i0 = int(np.clip(i0, 0, nx - 1))
+
+    def _valid(j, i):
+        return (mask_rho[j, i] >= 0.5
+                and np.isfinite(h[j, i])
+                and h[j, i] >= min_depth)
+
+    if _valid(j0, i0):
+        return j0, i0
+
+    for r in range(1, rmax + 1):
+        j_min = max(0, j0 - r);  j_max = min(ny - 1, j0 + r)
+        i_min = max(0, i0 - r);  i_max = min(nx - 1, i0 + r)
+
+        sub_mask = mask_rho[j_min:j_max + 1, i_min:i_max + 1]
+        sub_h    = h[j_min:j_max + 1, i_min:i_max + 1]
+        sea      = (sub_mask >= 0.5) & np.isfinite(sub_h) & (sub_h >= min_depth)
+
+        if not np.any(sea):
+            continue
+
+        jj, ii = np.where(sea)
+        jj = jj + j_min
+        ii = ii + i_min
+        dist2 = (ii.astype(float) - i0) ** 2 + (jj.astype(float) - j0) ** 2
+        k = int(np.argmin(dist2))
+        return int(jj[k]), int(ii[k])
+
+    # Fallback: return original point if nothing found within rmax
+    return j0, i0
+
+
 def get_concentration_profile(p: float, lam: float, t: str,
                               use_cache: bool = True,
                               cache_dir: str = CACHE_DIR) -> dict:
@@ -261,18 +325,31 @@ def get_concentration_profile(p: float, lam: float, t: str,
     dst_lon = np.linspace(lon_rho.min(), lon_rho.max(), lon_rho.shape[1])
     dst_lat = np.linspace(lat_rho.min(), lat_rho.max(), lat_rho.shape[0])
 
-    # 3. Apply Distrib3D: horizontal remapping + conservative vertical
+    # 3. Snap the requested point to the nearest sea cell on the curvilinear
+    #    grid, where mask_rho is natively defined and reliable.
+    #    find_nearest_rho_point finds the closest cell on the true 2D
+    #    curvilinear grid; snap_to_nearest_sea then ensures it is a valid
+    #    marine cell (mask=1, depth >= min_depth).
+    j0, i0 = find_nearest_rho_point(lat_rho, lon_rho, p, lam)
+    j_sea, i_sea = snap_to_nearest_sea(j0, i0, mask_rho, h)
+
+    # Use the geographic coordinates of the snapped sea cell to find the
+    # corresponding pixel on the regular grid produced by Distrib3D.
+    lat_sea = float(lat_rho[j_sea, i_sea])
+    lon_sea = float(lon_rho[j_sea, i_sea])
+
+    # 4. Apply Distrib3D: horizontal remapping + conservative vertical
     #    redistribution sigma → 136 Copernicus depth levels in metres
     distributor = Distrib3D(lon_rho, lat_rho, dst_lon, dst_lat,
                             s_rho, mask_rho, h)
     conc_dist = distributor.distrib(conc_4d)
     # conc_dist: (1, 136, len(dst_lat), len(dst_lon))
 
-    # 4. Find the nearest point to (p, lam) on the 1D regular grid
-    lat_idx = int(np.argmin(np.abs(dst_lat - p)))
-    lon_idx = int(np.argmin(np.abs(dst_lon - lam)))
+    # 5. Find the pixel on the regular grid closest to the snapped sea cell
+    lat_idx = int(np.argmin(np.abs(dst_lat - lat_sea)))
+    lon_idx = int(np.argmin(np.abs(dst_lon - lon_sea)))
 
-    # 5. Extract the vertical profile (136,) at that point
+    # 6. Extract the vertical profile (136,) at that point
     profile = np.array(conc_dist[0, :, lat_idx, lon_idx], dtype=np.float64)
     # Convert fill values to NaN
     profile[profile >= FILL_VALUE * 0.9] = np.nan
@@ -418,10 +495,21 @@ def get_concentration_matrix(p: float, lam: float, t0: str,
             conc_dist = distributor.distrib(conc_4d)
             # conc_dist: (1, 136, len(dst_lat), len(dst_lon))
 
-            # Find the point on the 1D regular grid (only on the first file)
+            # Snap to nearest sea cell and find regular-grid indices.
+            # Done only on the first available file; all subsequent hours
+            # reuse the same (lat_idx, lon_idx) since the grid is fixed.
             if lat_idx is None:
-                lat_idx   = int(np.argmin(np.abs(dst_lat - p)))
-                lon_idx   = int(np.argmin(np.abs(dst_lon - lam)))
+                # Step 1: find the curvilinear cell nearest to (p, lam)
+                #         using true 2D Euclidean distance on the curvilinear grid
+                j0, i0 = find_nearest_rho_point(lat_rho, lon_rho, p, lam)
+                # Step 2: snap to nearest valid sea cell on curvilinear grid
+                j_sea, i_sea = snap_to_nearest_sea(j0, i0, mask_rho, h)
+                # Step 3: use the geographic coords of the sea cell to find
+                # the corresponding pixel on the regular grid
+                lat_sea = float(lat_rho[j_sea, i_sea])
+                lon_sea = float(lon_rho[j_sea, i_sea])
+                lat_idx   = int(np.argmin(np.abs(dst_lat - lat_sea)))
+                lon_idx   = int(np.argmin(np.abs(dst_lon - lon_sea)))
                 lat_found = float(dst_lat[lat_idx])
                 lon_found = float(dst_lon[lon_idx])
 
