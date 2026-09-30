@@ -47,7 +47,7 @@ Example:
 import sys
 import os
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -94,6 +94,17 @@ def stem_from_csv(csv_path: str) -> str:
 
 # ── GeoTIFF generation ────────────────────────────────────────────────────────
 
+def _generate_one(args_tuple):
+    """
+    Top-level function (picklable) for ProcessPoolExecutor.
+    Generates a single GeoTIFF given (ts, out_path, max_depth).
+    Must be defined at module level so it can be pickled by multiprocessing.
+    """
+    ts, out_path, max_depth = args_tuple
+    ok = netcdf_to_geotiff(ts, out_path, max_depth)
+    return ts, ok
+
+
 def generate_geotiffs_for_t0(t0: str, geotiff_root: str,
                               max_depth: float,
                               workers: int) -> tuple[int, int, int]:
@@ -101,10 +112,16 @@ def generate_geotiffs_for_t0(t0: str, geotiff_root: str,
     Generates the 72 hourly GeoTIFFs for a given t0 into the shared
     directory {geotiff_root}/{t0}/.
 
+    Uses ProcessPoolExecutor (not ThreadPoolExecutor) when workers > 1 so
+    that each worker runs in a separate process with its own memory space.
+    This avoids numba JIT thread-safety issues that cause segfaults when
+    multiple threads call Distrib3D simultaneously.
+
     Files already present on disk are silently skipped (resume-friendly).
 
     Returns (n_ok, n_skipped, n_missing) counts.
     """
+    import multiprocessing
     out_dir = geotiff_dir_for_t0(geotiff_root, t0)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -119,7 +136,7 @@ def generate_geotiffs_for_t0(t0: str, geotiff_root: str,
         if os.path.exists(out_path):
             n_skipped += 1
         else:
-            to_generate.append(ts)
+            to_generate.append((ts, os.path.join(out_dir, f"wcm3_{ts}.tif"), max_depth))
 
     if not to_generate:
         return 0, n_skipped, 0
@@ -127,15 +144,24 @@ def generate_geotiffs_for_t0(t0: str, geotiff_root: str,
     n_ok      = 0
     n_missing = 0
 
-    def _generate(ts):
-        out_path = os.path.join(out_dir, f"wcm3_{ts}.tif")
-        ok = netcdf_to_geotiff(ts, out_path, max_depth)
-        return ts, ok
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(_generate, ts): ts for ts in to_generate}
-        for future in as_completed(futures):
-            ts, ok = future.result()
+    if workers > 1:
+        # 'spawn' context: each worker is a fresh Python process — no shared
+        # numba state, no segfaults from concurrent JIT compilation.
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as executor:
+            futures = {executor.submit(_generate_one, args): args[0]
+                       for args in to_generate}
+            for future in as_completed(futures):
+                ts, ok = future.result()
+                if ok:
+                    n_ok += 1
+                else:
+                    n_missing += 1
+                    print(f"    [MISS] {ts}", flush=True)
+    else:
+        # Single worker: run sequentially in the same process
+        for args in to_generate:
+            ts, ok = _generate_one(args)
             if ok:
                 n_ok += 1
             else:
@@ -205,6 +231,7 @@ def main():
     print(f"Unique t0 values   : {len(unique_t0s)}")
     print(f"GeoTIFF root       : {os.path.abspath(args.geotiff_root)}")
     print(f"GeoJSON directory  : {os.path.abspath(args.geojson_dir)}")
+    print(f"Workers            : {args.workers}")
     print()
 
     total_ok      = 0
