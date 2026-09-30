@@ -29,20 +29,20 @@ Tested on QGIS 4.2.0-Belém do Pará (PyQt6 / Qt6).
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Directory containing the discarded sample CSV files
-SAMPLES_DIR = "/home/francesco/Scrivania/dataset_def/2021/scartati/"
+SAMPLES_DIR = "/path/to/dataset/2023/scartati/"
 
 # Root directory containing the shared GeoTIFF folders (one per t0)
 # produced by wacomm_batch_geotiff.py
-GEOTIFF_ROOT = "/home/francesco/Scrivania/dataset_def/geotiff/"
+GEOTIFF_ROOT = "/path/to/geotiff/"
 
 # Directory containing the GeoJSON files produced by wacomm_batch_geotiff.py
-GEOJSON_DIR = "/home/francesco/Scrivania/dataset_def/geojson/2021/scartati"
+GEOJSON_DIR = "/path/to/geojson/2023/scartati/"
 
 # Directory where QGIS project files (.qgz) will be saved
-PROJECTS_DIR = "/home/francesco/Scrivania/dataset_def/qgis/2021/scartati"
+PROJECTS_DIR = "/path/to/qgis_projects/2023/scartati/"
 
 # Path to metacharts.json for the concentration colour scale
-METACHARTS_PATH = "/home/francesco/Scrivania/wacomm-tools/metacharts.json"
+METACHARTS_PATH = "/path/to/wacomm-tools/metacharts.json"
 
 # Temporal step: duration of each frame in hours (keep at 1)
 STEP_HOURS = 1
